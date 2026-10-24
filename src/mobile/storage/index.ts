@@ -206,6 +206,11 @@ export class IndexedDbStorage implements StorageApi {
 
   async addHistory(result: MatchResult): Promise<HistoryData> {
     const history = await this.loadHistory()
+    // A reconnect can re-deliver the same match-end result; keep one record.
+    const existing = history.matches.findIndex(
+      (match) => match.matchId === result.matchId
+    )
+    if (existing >= 0) history.matches.splice(existing, 1)
     history.matches.unshift(result)
     // Keep last 100 matches.
     if (history.matches.length > 100) history.matches.length = 100

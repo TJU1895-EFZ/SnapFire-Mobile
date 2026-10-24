@@ -1,67 +1,81 @@
 /**
- * Virtual trigger button — bottom-right corner of the screen.
+ * Virtual trigger — bottom-right corner.
  *
- * Semi-transparent circular button.  Pressing it fires the onFire callback.
- * Visual feedback: scales up and brightens on press.
+ * Fires once per press.  Pointer events cover both touch and mouse, and the
+ * button sits inside the safe area on notched phones.
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 
 interface Props {
   onFire: () => void
   disabled?: boolean
 }
 
+const SIZE = 76
+
 export function TriggerButton({ onFire, disabled }: Props): React.JSX.Element {
   const [pressed, setPressed] = useState(false)
-  const size = 72
-  const half = size / 2
 
-  const handleTouchStart = useCallback(
-    (e: React.TouchEvent) => {
-      e.preventDefault()
+  const handleDown = useCallback(
+    (event: React.PointerEvent) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      event.preventDefault()
+      if (disabled) return
       setPressed(true)
       onFire()
     },
-    [onFire]
+    [disabled, onFire]
   )
 
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    e.preventDefault()
+  const handleUp = useCallback((event: React.PointerEvent) => {
+    event.preventDefault()
     setPressed(false)
   }, [])
 
   return (
     <button
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchEnd}
+      onPointerDown={handleDown}
+      onPointerUp={handleUp}
+      onPointerCancel={handleUp}
+      onPointerLeave={() => setPressed(false)}
+      onContextMenu={(event) => event.preventDefault()}
       disabled={disabled}
       style={{
         position: 'fixed',
-        bottom: 24,
-        right: 24,
-        width: size,
-        height: size,
+        right: 'max(20px, env(safe-area-inset-right))',
+        bottom: 'max(20px, env(safe-area-inset-bottom))',
+        width: SIZE,
+        height: SIZE,
+        zIndex: 500,
         borderRadius: '50%',
-        background: pressed
-          ? 'rgba(240,160,48,0.85)'
-          : 'rgba(240,160,48,0.35)',
-        border: `2px solid ${pressed ? '#fff' : 'rgba(240,160,48,0.6)'}`,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        transform: pressed ? 'scale(0.9)' : 'scale(1)',
-        transition: 'transform 0.08s ease, background 0.08s ease',
-        zIndex: 500,
-        cursor: 'pointer',
+        background: pressed ? 'rgba(240,160,48,0.9)' : 'rgba(240,160,48,0.32)',
+        border: `2px solid ${pressed ? '#fff' : 'rgba(240,160,48,0.65)'}`,
+        boxShadow: pressed
+          ? '0 0 22px rgba(240,160,48,0.65)'
+          : '0 0 14px rgba(240,160,48,0.18)',
+        transform: pressed ? 'scale(0.92)' : 'scale(1)',
+        transition: 'transform 0.07s ease, background 0.07s ease',
+        touchAction: 'none',
         WebkitTapHighlightColor: 'transparent',
-        pointerEvents: disabled ? 'none' : 'auto'
+        pointerEvents: disabled ? 'none' : 'auto',
+        opacity: disabled ? 0.35 : 1
       }}
       aria-label="开火"
     >
-      {/* Crosshair icon */}
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" style={{ opacity: pressed ? 1 : 0.8 }}>
+      <svg
+        width="30"
+        height="30"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#fff"
+        strokeWidth="2"
+        strokeLinecap="round"
+        style={{ opacity: pressed ? 1 : 0.85 }}
+      >
         <circle cx="12" cy="12" r="8" />
         <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
         <circle cx="12" cy="12" r="1.5" fill="#fff" stroke="none" />

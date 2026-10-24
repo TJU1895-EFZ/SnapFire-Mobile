@@ -8,7 +8,9 @@ let queue: Promise<unknown> = Promise.resolve()
 function buildConfig(backend: 'webgl' | 'cpu'): Partial<Config> {
   return {
     backend,
-    modelBasePath: './models/',
+    // Resolve against the document so the app also works when it is served
+    // from a sub-path rather than the domain root.
+    modelBasePath: new URL('models/', document.baseURI).href,
     cacheModels: true,
     debug: false,
     async: true,

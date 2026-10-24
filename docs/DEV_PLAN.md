@@ -15,7 +15,9 @@
 ### 0.1 当前状态
 
 - 桌面版 SnapFire v1.0.0 已发布，功能完整可用。
-- 移动端项目处于规划阶段，尚未开始编码。
+- 移动端 M0–M7 已实现（2026-10-24）：项目骨架、共享代码、IndexedDB、
+  App 适配、建档与大厅、触屏输入、战斗页、PWA、局域网 HTTPS/WSS 代理。
+- M8（真机 AI 性能实测）与 M9（桌面 + 手机完整对局验收）仍待执行。
 
 ### 0.2 完成定义（DoD）
 
@@ -78,7 +80,8 @@ Mobile V1 视为完成，必须同时满足：
 
 与桌面版相同，区别仅在于：
 
-- 手机客户端通过公网 WebSocket 连接 `ws://房主IP:端口`（而非 `ws://127.0.0.1:端口`）。
+- 手机客户端通过局域网 WebSocket 连接房主；页面为 HTTPS 时使用 `wss://`，
+  由独立代理转发到桌面版明文 `ws://127.0.0.1:端口`。
 - 手机客户端不使用 `window.snapfire.*` IPC，直接使用 IndexedDB storage。
 - 手机客户端不调用 `host.start/stop`（不跑服务器）。
 - 手机客户端没有文件对话框（无备份导出/导入、无 Field Test 日志文件）。
@@ -96,12 +99,13 @@ SnapFire-Mobile/
 │   ├── manifest.json                   ← PWA 清单
 │   ├── icons/
 │   │   ├── icon-192.png                ← 192×192 图标
-│   │   ├── icon-512.png                ← 512×512 图标
-│   │   └── ...
+│   │   └── icon-512.png                ← 512×512 图标
+│   ├── service-worker.js               ← 唯一的 Service Worker 源文件
 │   └── models/                         ← Human AI 离线模型
-│       ├── blazeface.json
-│       ├── faceres.json
-│       └── movenet-lightning.json
+│       ├── blazeface.json / .bin
+│       ├── faceres.json / .bin
+│       ├── movenet-lightning.json / .bin
+│       └── LICENSE-human.txt
 ├── src/
 │   ├── shared/                         ← 从桌面版复制，不动
 │   │   ├── types.ts                    ← 共享类型、协议、常量
@@ -131,52 +135,66 @@ SnapFire-Mobile/
 │   │   ├── utils/                      ← 从桌面版复制
 │   │   │   ├── format.ts               ← 时间格式化
 │   │   │   └── clipboard.ts            ← 剪贴板
-│   │   ├── screens/                    ← 从桌面版复制 + 适配
-│   │   │   ├── HomeScreen.tsx          ← 首页（精简布局）
+│   │   ├── screens/                    ← 页面组件
+│   │   │   ├── HomeScreen.tsx          ← 首页（精简布局 + 战绩汇总）
 │   │   │   ├── RoomEntryScreen.tsx     ← 房间入口（无创建）
-│   │   │   ├── LobbyScreen.tsx         ← 大厅（只读设置）
-│   │   │   ├── BattleScreen.tsx        ← 战斗页（触屏输入）
-│   │   │   ├── ResultsScreen.tsx       ← 结算页（基本不动）
-│   │   │   ├── EnrollmentModal.tsx     ← 建档弹窗（基本不动）
+│   │   │   ├── LobbyScreen.tsx         ← 大厅（只读设置 + 建档入口）
+│   │   │   ├── BattleScreen.tsx        ← 战斗页（摄像头 + 触屏 + 识别开火）
+│   │   │   ├── ResultsScreen.tsx       ← 结算页（返回大厅/离开）
+│   │   │   └── EnrollmentModal.tsx     ← 建档弹窗（正面/背面/侧面）
+│   │   ├── components/
 │   │   │   ├── SettingsModal.tsx       ← 设置弹窗（精简）
-│   │   │   └── HistoryModal.tsx        ← 战绩弹窗（基本不动）
-│   │   ├── storage/                    ← 新增：IndexedDB 存储
+│   │   │   ├── HistoryModal.tsx        ← 战绩弹窗
+│   │   │   ├── InstallPrompt.tsx       ← 添加到主屏提示
+│   │   │   ├── ErrorBoundary.tsx       ← 渲染错误兜底
+│   │   │   ├── Icons.tsx
+│   │   │   └── OperatorArt.tsx
+│   │   ├── storage/                    ← IndexedDB 存储
 │   │   │   ├── index.ts                ← IndexedDB 封装
 │   │   │   └── types.ts                ← 存储类型定义
-│   │   ├── input/                      ← 新增：触屏输入组件
+│   │   ├── input/                      ← 触屏输入组件
 │   │   │   ├── TriggerButton.tsx       ← 虚拟扳机按钮
-│   │   │   ├── TargetSelector.tsx      ← 滑动目标选择面板
-│   │   │   └── useTouchInput.ts        ← 触屏事件汇总 hook
-│   │   └── styles/                     ← 新增：移动端样式
-│   │       ├── global.css              ← 全局样式 + CSS 变量
-│   │       ├── mobile.css              ← 移动端响应式覆盖
-│   │       ├── home.css                ← 首页样式
-│   │       ├── screens.css             ← 子页/弹窗样式
-│   │       └── battle.css              ← 战斗页样式
-│   └── types/                          ← 移动端类型
-│       └── indexeddb.d.ts              ← IndexedDB 类型声明
-├── .swcrc                              ← SWC 配置（可选）
+│   │   │   └── TargetSelector.tsx      ← 滑动目标选择面板
+│   │   ├── hooks/
+│   │   │   ├── useCamera.ts            ← 手机摄像头参数
+│   │   │   ├── useServerClock.ts
+│   │   │   └── useTouchInput.ts        ← 选中目标状态
+│   │   └── utils/stats.ts              ← 个人战绩汇总
+│   └── styles/
+│       ├── global.css                  ← 全局样式 + CSS 变量
+│       └── screens.css                 ← 屏幕/弹窗/安全区/触屏样式
+├── scripts/
+│   ├── lan-proxy.mjs                   ← HTTPS 静态服务 + WSS 反向代理
+│   ├── make-certs.mjs                  ← mkcert / OpenSSL 证书
+│   └── smoke-lan.mjs                   ← 代理冒烟测试
+├── docs/
+│   ├── PRD.md
+│   ├── DEV_PLAN.md
+│   └── LAN_DEPLOY.md                   ← 局域网 HTTPS/WSS 部署
 ├── vite.config.ts                      ← Vite 构建配置
+├── vitest.config.ts                    ← 单元测试配置
 ├── tsconfig.json                       ← TypeScript 配置
 ├── package.json                        ← 依赖与脚本（精简）
-├── service-worker.ts                   ← Service Worker（PWA 缓存）
-└── README.md                           ← 移动端说明
+├── README.md                           ← 移动端说明
+├── LICENSE                             ← Apache-2.0
+└── THIRD_PARTY_NOTICES.md
 ```
 
-### 2.1 从桌面版复制的文件（不动）
+### 2.1 从桌面版复制的模块与适配
 
-以下文件**原封不动复制**，不做任何修改：
+以下模块以桌面版为基础；“原样复制”表示接口与行为不变，少量适配已在说明中列出。
 
-| 模块 | 文件 | 原因 |
+| 模块 | 文件 | 说明 |
 | --- | --- | --- |
-| 共享类型 | `shared/types.ts`, `shared/fieldLog.ts` | 纯 TypeScript 类型和纯函数 |
-| 网络层 | `net/NetClient.ts` | 纯 WebSocket 封装 |
-| AI 识别 | `vision/engine.ts`, `vision/human.ts`, `vision/descriptors.ts`, `vision/enrollment.ts` | 依赖 Human + Canvas，浏览器原生支持 |
-| 3D 渲染 | `game/BattleScene.ts` | Three.js WebGL，跨平台 |
-| 音频 | `game/audio.ts` | Web Audio API，跨平台 |
-| 摄像头 | `hooks/useCamera.ts` | `getUserMedia` 浏览器原生支持 |
-| 服务器时钟 | `hooks/useServerClock.ts` | 纯逻辑 |
-| UI 组件 | `components/Icons.tsx`, `utils/format.ts`, `utils/clipboard.ts` | 纯 React/JS |
+| 共享类型 | `shared/types.ts`, `shared/fieldLog.ts` | 原样复制 |
+| 网络层 | `net/NetClient.ts` | 原样复制；仅新增 `ws/wss` 协议自动解析 |
+| AI 识别 | `vision/descriptors.ts`, `vision/enrollment.ts` | 原样复制 |
+| AI 识别 | `vision/engine.ts`, `vision/human.ts` | 仅修改手机识别档位、模型绝对路径 |
+| 3D 渲染 | `game/BattleScene.ts` | 原样复制 |
+| 音频 | `game/audio.ts` | 原样复制 |
+| 摄像头 | `hooks/useCamera.ts` | 改为手机分辨率/后置优先；增加安全上下文检查 |
+| 服务器时钟 | `hooks/useServerClock.ts` | 原样复制 |
+| UI 组件 | `components/Icons.tsx`, `utils/format.ts`, `utils/clipboard.ts` | 原样复制 |
 
 ### 2.2 从桌面版复制但需要修改的文件
 
@@ -186,11 +204,11 @@ SnapFire-Mobile/
 | `screens/RoomEntryScreen.tsx` | 移除"创建房间"按钮，只保留"加入房间" |
 | `screens/LobbyScreen.tsx` | 设置区域改为只读（不显示修改控件） |
 | `screens/BattleScreen.tsx` | **最大改动**：移除键盘事件，接入触屏输入；HUD 布局适配小屏；移除 Field Test 面板和调试面板 |
-| `screens/SettingsModal.tsx` | 移除备份导出/导入、Field Test 日志、调试开关；保留音量/质量/摄像头 |
-| `screens/ResultsScreen.tsx` | 基本不动，微调布局 |
-| `screens/EnrollmentModal.tsx` | 基本不动，微调布局 |
-| `screens/HistoryModal.tsx` | 基本不动 |
-| `App.tsx` | **核心改动**：移除 `window.snapfire.*` IPC 调用；接入 IndexedDB storage；移除 `host.start/stop`；移除 Field Test 日志相关逻辑 |
+| `components/SettingsModal.tsx` | 移除备份导出/导入、Field Test 日志、调试开关；保留音量/质量/摄像头 |
+| `screens/ResultsScreen.tsx` | 返回大厅/离开房间；本局与个人统计 |
+| `screens/EnrollmentModal.tsx` | 移植并适配移动端布局；缩略图只在采集过程中使用，不持久化 |
+| `components/HistoryModal.tsx` | 显示本人汇总；修复胜场/命中率统计 |
+| `App.tsx` | **核心改动**：移除 `window.snapfire.*` IPC；接入 IndexedDB；移除 `host.start/stop`；按房间阶段驱动导航；网络回调使用 ref 读取最新状态 |
 
 ### 2.3 新增的文件
 
@@ -202,12 +220,12 @@ SnapFire-Mobile/
 | 触屏输入 | `input/TargetSelector.tsx` | 屏幕左侧滑动选目标面板 |
 | 触屏输入 | `input/useTouchInput.ts` | 触屏事件汇总 hook |
 | PWA | `public/manifest.json` | PWA 应用清单 |
-| PWA | `service-worker.ts` | Service Worker 缓存策略 |
-| 样式 | `styles/global.css` | 全局样式 + CSS 变量（基于桌面版 global.css 精简） |
-| 样式 | `styles/mobile.css` | 移动端响应式覆盖 |
-| 样式 | `styles/home.css` | 首页样式（精简版） |
-| 样式 | `styles/screens.css` | 子页/弹窗样式（精简版） |
-| 样式 | `styles/battle.css` | 战斗页样式（触屏布局） |
+| PWA | `public/service-worker.js` | 唯一的 Service Worker（离线壳 + 缓存策略） |
+| PWA | `src/mobile/components/InstallPrompt.tsx` | 添加到主屏提示 |
+| 部署 | `scripts/lan-proxy.mjs` | HTTPS 静态服务 + WSS 反向代理 |
+| 部署 | `scripts/make-certs.mjs` | mkcert / OpenSSL 证书生成 |
+| 样式 | `src/styles/global.css` | 全局样式 + CSS 变量 |
+| 样式 | `src/styles/screens.css` | 屏幕/弹窗/安全区/触屏样式 |
 | 构建 | `vite.config.ts` | 纯 Vite 构建配置 |
 | 构建 | `package.json` | 精简依赖（无 Electron） |
 | 入口 | `index.html` | PWA 入口 HTML |
@@ -220,16 +238,17 @@ SnapFire-Mobile/
 
 | 里程碑 | 目标 | 依赖 | 状态 |
 | --- | --- | --- | --- |
-| M0 | 项目骨架搭建 | — | ⬜ |
-| M1 | 复制共享代码（不动的模块） | M0 | ⬜ |
-| M2 | IndexedDB 存储层 | M0 | ⬜ |
-| M3 | App 适配（去掉 IPC，接入 IndexedDB） | M1, M2 | ⬜ |
-| M4 | 屏幕组件适配（去掉桌面专属逻辑） | M3 | ⬜ |
-| M5 | 触屏输入层（虚拟扳机 + 目标选择） | M4 | ⬜ |
-| M6 | BattleScreen 适配（HUD 手机布局 + 触屏战斗） | M4, M5 | ⬜ |
-| M7 | PWA 配置（manifest + service worker + 图标） | M6 | ⬜ |
-| M8 | AI 性能测试与调优 | M6 | ⬜ |
-| M9 | 桌面 + 手机联机验收 | M7, M8 | ⬜ |
+| M0 | 项目骨架搭建 | — | ✅ |
+| M1 | 复制共享代码（不动的模块） | M0 | ✅（含 `public/models/`） |
+| M2 | IndexedDB 存储层 | M0 | ✅ |
+| M3 | App 适配（去掉 IPC，接入 IndexedDB） | M1, M2 | ✅ |
+| M4 | 屏幕组件适配（去掉桌面专属逻辑） | M3 | ✅（含建档弹窗） |
+| M5 | 触屏输入层（虚拟扳机 + 目标选择） | M4 | ✅ |
+| M6 | BattleScreen 适配（HUD 手机布局 + 触屏战斗） | M4, M5 | ✅ |
+| M7 | PWA 配置（manifest + service worker + 图标） | M6 | ✅ |
+| M7.5 | 局域网 HTTPS/WSS 部署（独立代理 + 桌面内嵌） | M7 | ✅ |
+| M8 | AI 性能测试与调优 | M6 | ⬜ 待真机 |
+| M9 | 桌面 + 手机联机验收 | M7, M8 | ⬜ 待真机 |
 
 ---
 
@@ -530,11 +549,10 @@ SnapFire-Mobile/
   - 横屏时重新布局 HUD（扳机在右下，目标选择在左下）。
   - 竖屏时 HUD 元素更紧凑。
 
-- [ ] **M6.6 样式**
-  - 创建 `styles/battle.css`（移动端版）。
-  - 确保摄像头画面全屏、HUD 元素不错位。
-  - `cursor: none`（手机端不需要隐藏光标）。
-  - 防止双击缩放、长按菜单等浏览器默认行为。
+- [x] **M6.6 样式**
+  - 战斗 HUD 使用内联样式 + `src/styles/screens.css` 的通用类。
+  - 确保摄像头画面全屏、HUD 元素按安全区布局、不错位。
+  - 已通过 `touch-action: none`、`user-select: none`、viewport 限制防止缩放/长按菜单。
 
 - [ ] **M6.7 验证**
   - 手机进入战斗页，摄像头画面正常。
@@ -572,11 +590,11 @@ SnapFire-Mobile/
   - 使用桌面版图标或创建简化版。
   - 生成 192×192 和 512×512 的 PNG。
 
-- [ ] **M7.3 创建 `service-worker.ts`**
-  - 缓存核心资源（HTML、CSS、JS、模型文件）。
-  - 首页离线可用。
-  - 战斗页不缓存（始终从服务器加载最新代码）。
-  - 使用 Cache First / Network First 策略。
+- [x] **M7.3 创建 `public/service-worker.js`**
+  - 缓存核心资源（HTML、manifest、图标；模型首次使用时缓存）。
+  - 首页离线可用；导航使用 Network First，更新可及时生效。
+  - Vite 带有内容哈希的 `/assets/` 使用 Cache First。
+  - 已删除根目录重复的 `service-worker.ts`，避免两份实现漂移。
 
 - [ ] **M7.4 注册 Service Worker**
   - 在 `index.tsx` 中注册 service worker。
@@ -663,7 +681,14 @@ SnapFire-Mobile/
 
 ### 5.1 WebSocket 协议
 
-与桌面版完全相同，使用 `NetClient.ts` 连接 `ws://房主IP:端口`。
+消息格式与桌面版完全相同，仍使用 `NetClient.ts`。地址解析会根据页面来源自动选择
+`ws://` 或 `wss://`：
+
+- `http://` 页面 → `ws://`
+- `https://` 页面（局域网代理）→ `wss://`
+
+代理（`scripts/lan-proxy.mjs`）负责 TLS 终止并把 WebSocket 转发到桌面版
+`ws://127.0.0.1:17890`。
 
 ### 5.2 IndexedDB 存储接口
 
@@ -684,25 +709,31 @@ interface StorageApi {
 }
 ```
 
-### 5.3 手机摄像头默认参数
+### 5.3 手机摄像头默认参数（已落地）
+
+`src/mobile/hooks/useCamera.ts`：
 
 ```ts
-// 手机端默认降低分辨率和帧率
-const MOBILE_BASE: MediaTrackConstraints = {
-  width: { ideal: 1280 },   // 桌面 1920 → 手机 1280
-  height: { ideal: 720 },   // 桌面 1080 → 手机 720
-  frameRate: { ideal: 15, min: 10 }  // 桌面 30 → 手机 15
+const MOBILE_VIDEO: MediaTrackConstraints = {
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+  frameRate: { ideal: 15, min: 10 },
+  facingMode: { ideal: 'environment' }
 }
 ```
 
-### 5.4 手机 AI 识别默认参数
+选择具体设备时去掉 `facingMode`，避免与 `deviceId` 冲突；非安全来源会直接给出
+“需要 HTTPS”的提示。
+
+### 5.4 手机 AI 识别默认参数（已落地）
+
+`src/mobile/vision/engine.ts`：
 
 ```ts
-// 手机端降低检测频率和画布宽度
-const MOBILE_QUALITY_PRESETS: Record<DetectionQuality, { intervalMs: number; cropScale: number; maxWidth: number }> = {
-  performance: { intervalMs: 500,  cropScale: 0.5, maxWidth: 480 },   // 桌面 340/0.54/720
-  balanced:    { intervalMs: 340,  cropScale: 0.54, maxWidth: 480 },   // 桌面 200/0.62/960
-  accurate:    { intervalMs: 200,  cropScale: 0.62, maxWidth: 720 }    // 桌面 130/0.7/1280
+const QUALITY_PRESETS = {
+  performance: { intervalMs: 500, cropScale: 0.5,  maxWidth: 480 },
+  balanced:    { intervalMs: 340, cropScale: 0.54, maxWidth: 480 },
+  accurate:    { intervalMs: 200, cropScale: 0.62, maxWidth: 720 }
 }
 ```
 
@@ -745,3 +776,62 @@ M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9
 - M6（BattleScreen 适配）是手机端工作量最大的阶段，包含 HUD 重新布局和触屏输入集成。
 - M8（AI 性能测试）是最大风险点，如果 Human 在手机太慢需要尽早发现并调整方案。
 - M7（PWA）可以并行于 M6，不阻塞主路径。
+
+---
+
+## 9. 实施记录（2026-10-24）
+
+本次修复把 M0–M7 从“能编译”推进到“真机可跑”，重点如下：
+
+### 9.1 安全上下文与部署
+
+- 新增独立进程 `scripts/lan-proxy.mjs`：HTTPS 静态托管 `dist/` + WSS 反向代理，
+  不修改桌面版仓库。
+- 桌面版当前代码已把同样的 HTTPS/WSS 服务内嵌到 Electron 主进程：创建房间时
+  自动启动，大厅显示手机地址、本地 CA 证书，以及二维码 / HTTP 安装页
+  （手机扫码即可下载 CA 并打开客户端）；无需终端或独立代理。
+  （实现位于桌面仓库 `src/main/mobileServer.ts`；已发布的 v1.0.0 便携包尚未包含，
+  需重新构建桌面端。）
+- 新增 `scripts/make-certs.mjs`：优先 mkcert，支持 OpenSSL 自签名兜底。
+- `NetClient.normalizeHostAddress` 根据页面协议自动选择 `ws/wss`。
+- 首页房间地址在局域网 HTTPS 页面下自动预填当前页面地址。
+- 详见 `docs/LAN_DEPLOY.md`。
+
+### 9.2 识别链路
+
+- 从桌面版复制 `public/models/`（blazeface / faceres / movenet-lightning）。
+- `human.ts` 使用基于 `document.baseURI` 的绝对模型地址。
+- 摄像头参数改为 1280×720@15、优先后置；非安全来源给出明确错误。
+- 识别档位改为手机参数（500/340/200ms，480/480/720px）。
+- 新增建档弹窗：正面/背面必采、侧面可选；保存到 IndexedDB 并发送
+  `set-appearance`；缩略图只在采集过程中使用，不持久化、不上传；处理服务端
+  `gallery` 广播。
+
+### 9.3 战斗与导航
+
+- 修复摄像头从未启动、视频元素未绑定 `useCamera` ref 的问题。
+- 修复 `match-start`/`room.phase` 不切屏导致战斗页不可达的问题。
+- 修复网络监听捕获首次渲染闭包、受伤音效永不触发的问题。
+- 开火时调用 `VisionEngine.analyzeNow()`；使用 `playerId` 而非昵称；
+  队友/未识别/过期检测不会猜测目标；手动选择作为显式辅助。
+- 补上复活倒计时、无敌提示、受击闪烁、准心、击杀信息。
+- 结算页支持房主返回大厅；非房主等待房主操作。
+- 大厅显示全员建档/准备状态和开局条件清单。
+
+### 9.4 PWA 与工程
+
+- 合并为唯一 `public/service-worker.js`；离线壳、模型缓存、版本清理。
+- PWA 安装提示（Chrome/Edge + iOS 手动提示）。
+- 战斗页与建档弹窗改为懒加载：主包从约 2.38 MB 降到约 265 KB。
+- 新增 ErrorBoundary、初始化超时、连接失败留在入口页。
+- 新增 Vitest：地址解析、身份匹配、IndexedDB 存储。
+- 新增 `npm run smoke:lan`：验证 HTTPS、模型、Service Worker 头、目录穿越和
+  WSS 转发。
+- 新增 `npm run smoke:app`：用 Edge/Chrome + 模拟房间服务跑通首页 → 加入 →
+  建档（摄像头）→ 倒计时 → 战斗（选目标/开火）→ 结算 → 首页。
+
+### 9.5 仍待执行
+
+- M8：在目标手机上实测识别 FPS/耗时/发热，记录到 `docs/PERFORMANCE.md`。
+- M9：桌面房主 + 1~2 台手机完成建档、对射、复活、结算、断线验收，
+  记录到 `docs/TEST_REPORT.md`。

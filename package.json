@@ -1,6 +1,6 @@
 {
   "name": "snapfire-mobile",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "description": "SnapFire - mobile browser client for LAN mixed-reality real-person gunfight",
   "private": true,
   "type": "module",
@@ -8,7 +8,15 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke:lan": "node scripts/smoke-lan.mjs",
+    "lan": "node scripts/lan-proxy.mjs",
+    "lan:prod": "npm run build && node scripts/lan-proxy.mjs",
+    "lan:cert": "node scripts/make-certs.mjs",
+    "lan:cert:selfsigned": "node scripts/make-certs.mjs --self-signed",
+    "smoke:app": "node scripts/smoke-app.mjs"
   },
   "dependencies": {
     "@vladmandic/human": "^3.3.6",
@@ -22,8 +30,11 @@
     "@types/react-dom": "^19.3.0",
     "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "fake-indexeddb": "^6.2.6",
+    "playwright-core": "^1.64.1",
     "typescript": "^5.9.3",
     "vite": "^8.3.4",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "ws": "^8.22.0"
   }
 }

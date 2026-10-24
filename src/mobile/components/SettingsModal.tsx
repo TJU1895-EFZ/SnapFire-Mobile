@@ -5,7 +5,7 @@
  * No backup/export/import, no Field Test log, no debug panel.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { audio } from '@mobile/game/audio'
 import { listCameras } from '@mobile/hooks/useCamera'
 import { storage } from '@mobile/storage'
@@ -30,8 +30,6 @@ export function SettingsModal({ settings, onChange, onClose }: Props): React.JSX
   const [cameraId, setCameraId] = useState(settings.cameraDeviceId ?? '')
   const [showConfirm, setShowConfirm] = useState(false)
 
-  const prevVolumeRef = useRef(settings.volume)
-
   // Load camera list.
   useEffect(() => {
     void listCameras().then(setCameras)
@@ -42,7 +40,6 @@ export function SettingsModal({ settings, onChange, onClose }: Props): React.JSX
     const timer = setTimeout(() => {
       audio.setVolume(volume)
       onChange({ volume })
-      prevVolumeRef.current = volume
     }, 100)
     return () => clearTimeout(timer)
   }, [volume, onChange])
@@ -75,7 +72,13 @@ export function SettingsModal({ settings, onChange, onClose }: Props): React.JSX
   }, [onClose])
 
   return (
-    <div style={styles.overlay} onClick={onClose}>
+    <div
+      style={styles.overlay}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="设置"
+    >
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div style={styles.header}>
@@ -135,13 +138,16 @@ export function SettingsModal({ settings, onChange, onClose }: Props): React.JSX
               onChange={(e) => handleCamera(e.target.value)}
               style={styles.select}
             >
-              <option value="">默认摄像头</option>
+              <option value="">默认摄像头（优先后置）</option>
               {cameras.map((cam) => (
                 <option key={cam.deviceId} value={cam.deviceId}>
                   {cam.label || `摄像头 ${cam.deviceId.slice(0, 6)}`}
                 </option>
               ))}
             </select>
+            <p className="tiny muted" style={{ marginTop: 6 }}>
+              下次进入战斗或建档时生效。若列表为空，请先在建档页允许摄像头权限。
+            </p>
           </div>
 
           {/* Clear data */}
@@ -185,15 +191,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    padding:
+      'max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))',
     zIndex: 1000
   },
   modal: {
     background: 'var(--bg-secondary)',
     border: '1px solid rgba(255,255,255,0.08)',
     borderRadius: 10,
-    width: '90%',
+    width: '100%',
     maxWidth: 400,
-    maxHeight: '85vh',
+    maxHeight: '90dvh',
     overflow: 'auto'
   },
   header: {

@@ -16,16 +16,42 @@ export interface JoinPayload {
   hostToken?: string
 }
 
-export function normalizeHostAddress(input: string): string {
+/**
+ * Turns the address the player typed into a WebSocket URL.
+ *
+ * Secure pages (the LAN HTTPS proxy) must use `wss://`; a `ws://` URL would be
+ * blocked by the browser as mixed content.  When the page is served by the
+ * proxy, leaving the port out also means "the port this page came from", so
+ * typing just `192.168.1.20` works.
+ */
+export function normalizeHostAddress(
+  input: string,
+  options: { secure?: boolean; defaultPort?: number } = {}
+): string {
   let value = input.trim()
   if (!value) throw new Error('请输入房主电脑的地址')
+
+  const protocolMatch = value.match(/^([a-z][a-z0-9+.-]*):\/\//i)
+  if (protocolMatch && !/^(https?|wss?)$/i.test(protocolMatch[1])) {
+    throw new Error('地址格式不正确，应类似 192.168.1.20:17890')
+  }
+
+  const secure =
+    options.secure !== undefined
+      ? options.secure
+      : typeof window !== 'undefined' && window.location.protocol === 'https:'
+
   if (/^https:\/\//i.test(value)) {
     value = value.replace(/^https:\/\//i, 'wss://')
   } else if (/^http:\/\//i.test(value)) {
-    value = value.replace(/^http:\/\//i, 'ws://')
+    value = value.replace(/^http:\/\//i, secure ? 'wss://' : 'ws://')
+  } else if (/^ws:\/\//i.test(value)) {
+    // Browsers block ws:// subresources on an https page.
+    if (secure) value = value.replace(/^ws:\/\//i, 'wss://')
   } else if (!/^wss?:\/\//i.test(value)) {
-    value = `ws://${value}`
+    value = `${secure ? 'wss' : 'ws'}://${value}`
   }
+
   let url: URL
   try {
     url = new URL(value)
@@ -33,7 +59,16 @@ export function normalizeHostAddress(input: string): string {
     throw new Error('地址格式不正确，应类似 192.168.1.20:17890')
   }
   if (!url.hostname) throw new Error('地址格式不正确')
-  if (!url.port) url.port = String(DEFAULT_PORT)
+  if (!url.port) {
+    const pagePort =
+      typeof window !== 'undefined' && window.location.protocol === 'https:'
+        ? window.location.port
+        : ''
+    // On a secure page with no explicit port, the same-origin HTTPS proxy is
+    // on 443.  Otherwise fall back to the desktop's default WS port.
+    const fallbackPort = secure ? (pagePort || '443') : DEFAULT_PORT
+    url.port = String(options.defaultPort ?? fallbackPort)
+  }
   url.pathname = ''
   url.search = ''
   url.hash = ''

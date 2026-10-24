@@ -2,31 +2,23 @@
  * History modal — shows past match results from IndexedDB.
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { formatClock, formatDateTime, formatPercent } from '@mobile/utils/format'
-import type { MatchResult, Team } from '@shared/types'
+import { computePlayerStats } from '@mobile/utils/stats'
+import type { MatchResult } from '@shared/types'
 
 interface Props {
   matches: MatchResult[]
+  selfId: string
   onClose: () => void
 }
 
-export function HistoryModal({ matches, onClose }: Props): React.JSX.Element {
+export function HistoryModal({ matches, selfId, onClose }: Props): React.JSX.Element {
   const [expandedId, setExpandedId] = useState<string | null>(null)
-
-  const total = matches.length
-  const wins = matches.filter((m) => {
-    const p = m.players.find((p) => p.team === m.winner)
-    return p && m.players.filter((pl) => pl.team === m.winner).length > 0
-  }).length
-
-  // Simplified win count: winner team exists in match.
-  const winCount = matches.filter((m) => m.winner !== 'draw').length
-
-  const totalKills = matches.reduce((s, m) => {
-    // We don't have selfId here, so just show total kills across all players.
-    return s + m.players.reduce((ss, p) => ss + p.kills, 0)
-  }, 0)
+  const stats = useMemo(
+    () => computePlayerStats(matches, selfId),
+    [matches, selfId]
+  )
 
   return (
     <div style={styles.overlay} onClick={onClose}>
@@ -42,16 +34,20 @@ export function HistoryModal({ matches, onClose }: Props): React.JSX.Element {
         {/* Summary */}
         <div style={styles.summary}>
           <div style={styles.stat}>
-            <div style={styles.statValue}>{total}</div>
+            <div style={styles.statValue}>{stats.matches}</div>
             <div style={styles.statLabel}>总场次</div>
           </div>
           <div style={styles.stat}>
-            <div style={styles.statValue}>{winCount}</div>
+            <div style={styles.statValue}>{stats.wins}</div>
             <div style={styles.statLabel}>胜场</div>
           </div>
           <div style={styles.stat}>
-            <div style={styles.statValue}>{totalKills}</div>
-            <div style={styles.statLabel}>总击杀</div>
+            <div style={styles.statValue}>{stats.kills}</div>
+            <div style={styles.statLabel}>击杀</div>
+          </div>
+          <div style={styles.stat}>
+            <div style={styles.statValue}>{formatPercent(stats.accuracy, 0)}</div>
+            <div style={styles.statLabel}>命中率</div>
           </div>
         </div>
 
@@ -96,7 +92,10 @@ export function HistoryModal({ matches, onClose }: Props): React.JSX.Element {
                           background: p.team === 'red' ? 'var(--red)' : 'var(--blue)',
                           flexShrink: 0
                         }} />
-                        <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+                        <span style={{ flex: 1, fontSize: 13 }}>
+                          {p.name}
+                          {p.id === selfId ? '（你）' : ''}
+                        </span>
                         <span style={{ fontSize: 12 }}>
                           {p.kills}杀 / {p.deaths}死 / {formatPercent(p.accuracy, 0)}
                         </span>
@@ -132,9 +131,9 @@ const styles: Record<string, React.CSSProperties> = {
     borderTopRightRadius: 12,
     width: '100%',
     maxWidth: 480,
-    maxHeight: '80vh',
+    maxHeight: '86dvh',
     overflow: 'auto',
-    paddingBottom: 24
+    paddingBottom: 'max(24px, env(safe-area-inset-bottom))'
   },
   header: {
     display: 'flex',

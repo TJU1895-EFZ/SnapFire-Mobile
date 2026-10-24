@@ -2,11 +2,16 @@
   "name": "SnapFire Mobile",
   "short_name": "SnapFire",
   "description": "Mixed Reality Real-Person Gunfight — LAN multiplayer on mobile browser",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "fullscreen"],
+  "orientation": "any",
   "background_color": "#07090a",
   "theme_color": "#07090a",
-  "orientation": "landscape",
+  "lang": "zh-CN",
+  "categories": ["games", "entertainment"],
   "icons": [
     {
       "src": "/icons/icon-192.png",

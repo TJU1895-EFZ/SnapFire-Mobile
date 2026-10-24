@@ -1,772 +1,712 @@
 /**
  * Mobile app root.
  *
- * Replaces the desktop's window.snapfire.* IPC with the IndexedDB storage
- * layer and manages simple screen navigation.
+ * Owns the network session, IndexedDB-backed player data and phase-driven
+ * navigation between the lobby, battle and results screens.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { audio } from '@mobile/game/audio'
-import { useCamera } from '@mobile/hooks/useCamera'
-import { useServerClock } from '@mobile/hooks/useServerClock'
-import { SettingsModal } from '@mobile/components/SettingsModal'
 import { HistoryModal } from '@mobile/components/HistoryModal'
-import { BattleScreen } from '@mobile/screens/BattleScreen'
-import { NetClient, type NetEvent, type WelcomeMessage } from '@mobile/net/NetClient'
+import { InstallPrompt } from '@mobile/components/InstallPrompt'
+import { SettingsModal } from '@mobile/components/SettingsModal'
+import { HomeScreen } from '@mobile/screens/HomeScreen'
+import { LobbyScreen } from '@mobile/screens/LobbyScreen'
+import { ResultsScreen } from '@mobile/screens/ResultsScreen'
+import { RoomEntryScreen } from '@mobile/screens/RoomEntryScreen'
+import { NetClient, normalizeHostAddress, type NetEvent } from '@mobile/net/NetClient'
 import { storage } from '@mobile/storage'
 import type {
+  AppearanceData,
   AppSettings,
   GalleryEntry,
+  HistoryData,
   MatchPhase,
   MatchResult,
-  MatchScore,
-  PlayerPublic,
   ProfileData,
   RoomPublicState,
-  ServerMessage,
-  Team
-} from '@shared/types'
-import {
-  COUNTDOWN_MS,
-  DAMAGE_PER_HIT,
-  DEFAULT_ROOM_SETTINGS,
-  INVULNERABLE_MS,
-  MAX_HP,
-  RESPAWN_MS
+  ServerMessage
 } from '@shared/types'
 
-// ── Screen types ───────────────────────────────────────────────────────────
+// Heavy screens (Three.js, Human AI) stay out of the initial bundle.
+const BattleScreen = lazy(() =>
+  import('@mobile/screens/BattleScreen').then((module) => ({
+    default: module.BattleScreen
+  }))
+)
+const EnrollmentModal = lazy(() =>
+  import('@mobile/screens/EnrollmentModal').then((module) => ({
+    default: module.EnrollmentModal
+  }))
+)
 
-type Screen =
-  | { name: 'home' }
-  | { name: 'room-entry' }
-  | { name: 'lobby' }
-  | { name: 'battle' }
-  | { name: 'results' }
+type Screen = 'home' | 'room-entry' | 'lobby' | 'battle' | 'results'
+type ToastKind = 'info' | 'success' | 'error'
 
-// ── App state (mirrors desktop App.tsx shape) ──────────────────────────────
-
-interface AppState {
-  profile: ProfileData
-  settings: AppSettings
-  gallery: GalleryEntry[]
-  room: RoomPublicState | null
-  phase: MatchPhase
-  selfId: string
-  isHost: boolean
-  score: MatchScore
-  killFeed: string[]
-  result: MatchResult | null
-  toast: { message: string; kind: 'info' | 'success' | 'error' } | null
-  history: { matches: import('@shared/types').MatchResult[] }
+interface ToastState {
+  id: number
+  message: string
+  kind: ToastKind
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function makeEmptyRoom(roomCode: string, hostId: string): RoomPublicState {
-  return {
-    roomCode,
-    hostId,
-    phase: 'lobby',
-    players: [],
-    settings: DEFAULT_ROOM_SETTINGS,
-    score: { red: 0, blue: 0 },
-    matchStartedAt: null,
-    matchEndsAt: null,
-    remainingMs: null,
-    countdownEndsAt: null,
-    serverNow: Date.now(),
-    killFeed: [],
-    result: null
-  }
-}
-
-function findSelf(players: PlayerPublic[], selfId: string): PlayerPublic | undefined {
-  return players.find((p) => p.id === selfId)
-}
-
-function findPlayer(players: PlayerPublic[], id: string): PlayerPublic | undefined {
-  return players.find((p) => p.id === id)
-}
-
-// ── App ────────────────────────────────────────────────────────────────────
+const INIT_TIMEOUT_MS = 10_000
 
 export function App(): React.JSX.Element {
+  // ── Persisted data ─────────────────────────────────────────────────────
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
-  const [screen, setScreen] = useState<Screen>({ name: 'home' })
+  const [appearance, setAppearance] = useState<AppearanceData | null>(null)
+  const [history, setHistory] = useState<HistoryData>({ matches: [] })
+  const [initError, setInitError] = useState<string | null>(null)
+
+  // ── Session / navigation ───────────────────────────────────────────────
+  const [screen, setScreen] = useState<Screen>('home')
   const [room, setRoom] = useState<RoomPublicState | null>(null)
   const [gallery, setGallery] = useState<GalleryEntry[]>([])
   const [selfId, setSelfId] = useState('')
   const [isHost, setIsHost] = useState(false)
-  const [score, setScore] = useState<MatchScore>({ red: 0, blue: 0 })
-  const [killFeed, setKillFeed] = useState<string[]>([])
   const [result, setResult] = useState<MatchResult | null>(null)
-  const [toast, setToast] = useState<AppState['toast']>(null)
-  const [history, setHistory] = useState<{ matches: import('@shared/types').MatchResult[] }>({
-    matches: []
-  })
+  const [connecting, setConnecting] = useState(false)
+  const [joinError, setJoinError] = useState<string | null>(null)
+
+  // ── Modals / toast ─────────────────────────────────────────────────────
   const [showSettings, setShowSettings] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [showEnrollment, setShowEnrollment] = useState(false)
+  const [toast, setToast] = useState<ToastState | null>(null)
 
-  const netRef = useRef<NetClient | null>(null)
-  const phaseRef = useRef<MatchPhase>('lobby')
+  // ── Refs mirror state for network callbacks ────────────────────────────
+  const profileRef = useRef<ProfileData | null>(null)
   const settingsRef = useRef<AppSettings | null>(null)
+  const appearanceRef = useRef<AppearanceData | null>(null)
+  const roomRef = useRef<RoomPublicState | null>(null)
+  const selfIdRef = useRef('')
+  const isHostRef = useRef(false)
+  const screenRef = useRef<Screen>('home')
+  const netRef = useRef<NetClient | null>(null)
+  const connectingRef = useRef(false)
+  const toastTimerRef = useRef<number | null>(null)
+  const savedMatchesRef = useRef<Set<string>>(new Set())
 
-  // ── Initialise ────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────
+
+  const showToast = useCallback(
+    (message: string, kind: ToastKind = 'info', ms = 3200): void => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current)
+      }
+      setToast({ id: Date.now(), message, kind })
+      toastTimerRef.current = window.setTimeout(() => {
+        setToast(null)
+        toastTimerRef.current = null
+      }, ms)
+    },
+    []
+  )
+
+  const go = useCallback((next: Screen): void => {
+    screenRef.current = next
+    setScreen(next)
+  }, [])
+
+  const applyRoom = useCallback((next: RoomPublicState | null): void => {
+    roomRef.current = next
+    setRoom(next)
+    if (!next) {
+      setResult(null)
+      return
+    }
+    if (next.result) setResult(next.result)
+    else if (next.phase === 'lobby') setResult(null)
+  }, [])
+
+  const resetSession = useCallback((): void => {
+    roomRef.current = null
+    setRoom(null)
+    setGallery([])
+    selfIdRef.current = ''
+    setSelfId('')
+    isHostRef.current = false
+    setIsHost(false)
+    setResult(null)
+    setShowEnrollment(false)
+    setJoinError(null)
+    setConnecting(false)
+    connectingRef.current = false
+  }, [])
+
+  // ── Initialise persisted data ──────────────────────────────────────────
 
   useEffect(() => {
     let cancelled = false
+    let timeoutId: number | null = null
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutId = window.setTimeout(
+        () => reject(new Error('读取本地数据超时，请刷新页面重试')),
+        INIT_TIMEOUT_MS
+      )
+    })
+
     ;(async () => {
       try {
-        const [p, s, h, appearance] = await Promise.all([
-          storage.loadProfile(),
-          storage.loadSettings(),
-          storage.loadHistory(),
-          storage.loadAppearance()
+        const loaded = await Promise.race([
+          Promise.all([
+            storage.loadProfile(),
+            storage.loadSettings(),
+            storage.loadHistory(),
+            storage.loadAppearance()
+          ]),
+          timeout
         ])
         if (cancelled) return
-        setProfile(p)
-        setSettings(s)
-        setHistory(h)
-        settingsRef.current = s
-        audio.setVolume(s.volume)
-        if (appearance) {
-          setGallery([
-            {
-              id: p.id,
-              name: p.name,
-              team: null,
-              appearance
-            }
-          ])
-        }
-      } catch (err) {
-        console.error('[app] init failed', err)
-        if (!cancelled) setToast({ message: '初始化失败，请刷新页面', kind: 'error' })
+        const [nextProfile, nextSettings, nextHistory, nextAppearance] = loaded
+        profileRef.current = nextProfile
+        settingsRef.current = nextSettings
+        appearanceRef.current = nextAppearance
+        setProfile(nextProfile)
+        setSettings(nextSettings)
+        setHistory(nextHistory)
+        setAppearance(nextAppearance)
+        audio.setVolume(nextSettings.volume)
+      } catch (error) {
+        if (cancelled) return
+        console.error('[app] init failed', error)
+        setInitError(error instanceof Error ? error.message : '初始化失败')
+      } finally {
+        if (timeoutId !== null) window.clearTimeout(timeoutId)
       }
     })()
-    return () => { cancelled = true }
+
+    return () => {
+      cancelled = true
+      if (timeoutId !== null) window.clearTimeout(timeoutId)
+    }
   }, [])
 
-  // Persist settings when changed.
+  // Unlock Web Audio on the first user gesture.
   useEffect(() => {
-    if (!settings) return
-    void storage.saveSettings(settings)
-    settingsRef.current = settings
-    audio.setVolume(settings.volume)
-  }, [settings])
+    const unlock = (): void => audio.unlock()
+    window.addEventListener('pointerdown', unlock, { once: true })
+    return () => window.removeEventListener('pointerdown', unlock)
+  }, [])
 
-  // ── Toast helper ──────────────────────────────────────────────────────
-
-  const showToast = useCallback(
-    (message: string, kind: 'info' | 'success' | 'error' = 'info', ms = 3000) => {
-      setToast({ message, kind })
-      setTimeout(() => setToast(null), ms)
-    },
-    []
-  )
-
-  // ── Network ───────────────────────────────────────────────────────────
-
-  const connectAndJoin = useCallback(
-    async (address: string, roomCode: string, playerId: string, name: string) => {
-      const client = new NetClient()
-      netRef.current = client
-
-      try {
-        const welcome = await client.connect(address, { roomCode, playerId, name })
-        setSelfId(welcome.selfId)
-        setIsHost(welcome.isHost)
-        onRoomState(welcome.room)
-        if (welcome.gallery?.length) setGallery(welcome.gallery)
-        showToast(`已加入房间 ${roomCode}`, 'success')
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : '连接失败'
-        showToast(msg, 'error')
+  // Tear down the socket and toast timer on unmount.
+  useEffect(() => {
+    return () => {
+      netRef.current?.close()
+      netRef.current = null
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current)
       }
+    }
+  }, [])
 
-      client.on((event: NetEvent) => {
-        if (event.type === 'socket-closed' || event.type === 'socket-error') {
-          showToast('与服务端断开连接', 'error')
-          setRoom(null)
-          setScreen({ name: 'home' })
-          return
-        }
-        handleServerMessage(event as ServerMessage)
+  // ── Settings / profile ─────────────────────────────────────────────────
+
+  const updateSettings = useCallback(
+    (patch: Partial<AppSettings>): void => {
+      const current = settingsRef.current
+      if (!current) return
+      const next: AppSettings = { ...current, ...patch }
+      settingsRef.current = next
+      setSettings(next)
+      audio.setVolume(next.volume)
+      void storage.saveSettings(next).catch((error) => {
+        console.error('[app] save settings failed', error)
+        showToast('保存设置失败', 'error')
       })
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showToast]
+  )
+
+  const updateName = useCallback(
+    async (name: string): Promise<void> => {
+      const current = profileRef.current
+      if (!current) return
+      const clean = name.trim().slice(0, 16)
+      if (!clean) throw new Error('昵称不能为空')
+      const next: ProfileData = { ...current, name: clean, updatedAt: Date.now() }
+      await storage.saveProfile(next)
+      profileRef.current = next
+      setProfile(next)
+      if (netRef.current?.isOpen && roomRef.current?.phase === 'lobby') {
+        netRef.current.send({ type: 'set-name', name: clean })
+      }
+    },
     []
   )
 
-  const leaveRoom = useCallback(() => {
+  // ── Appearance ─────────────────────────────────────────────────────────
+
+  const sendAppearance = useCallback((value: AppearanceData): boolean => {
     const client = netRef.current
-    client?.send({ type: 'leave' })
-    client?.close()
-    netRef.current = null
-    setRoom(null)
-    setSelfId('')
-    setIsHost(false)
-    setScore({ red: 0, blue: 0 })
-    setKillFeed([])
-    setResult(null)
-    setScreen({ name: 'home' })
+    if (!client?.isOpen) return false
+    // The thumbnail never leaves the phone.
+    const { thumbnail: _thumbnail, ...rest } = value
+    return client.send({
+      type: 'set-appearance',
+      appearance: { ...rest, thumbnail: undefined }
+    })
   }, [])
 
-  const onRoomState = useCallback((state: RoomPublicState) => {
-    setRoom(state)
-    phaseRef.current = state.phase
-    setScore(state.score)
-    setKillFeed(state.killFeed.map((k) => `${k.killerName} → ${k.victimName}`))
-    if (state.result) setResult(state.result)
-  }, [])
+  const saveAppearance = useCallback(
+    async (next: AppearanceData): Promise<void> => {
+      await storage.saveAppearance(next)
+      appearanceRef.current = next
+      setAppearance(next)
+      const synced = sendAppearance(next)
+      setShowEnrollment(false)
+      showToast(
+        synced ? '建档已保存并同步到房间' : '建档已保存到本机，联网后可手动同步',
+        synced ? 'success' : 'info'
+      )
+    },
+    [sendAppearance, showToast]
+  )
 
-  // ── Server message handler ────────────────────────────────────────────
+  const syncAppearance = useCallback((): void => {
+    const value = appearanceRef.current
+    if (!value) {
+      showToast('本机还没有建档', 'error')
+      return
+    }
+    const synced = sendAppearance(value)
+    showToast(
+      synced ? '建档已同步到房间' : '网络未连接，同步失败',
+      synced ? 'success' : 'error'
+    )
+  }, [sendAppearance, showToast])
+
+  const saveMatchOnce = useCallback(
+    (matchResult: MatchResult): void => {
+      if (savedMatchesRef.current.has(matchResult.matchId)) return
+      savedMatchesRef.current.add(matchResult.matchId)
+      void storage
+        .addHistory(matchResult)
+        .then((nextHistory) => setHistory(nextHistory))
+        .catch((error) => {
+          savedMatchesRef.current.delete(matchResult.matchId)
+          console.error('[app] save history failed', error)
+          showToast('保存战绩失败', 'error')
+        })
+    },
+    [showToast]
+  )
+
+  // ── Navigation driven by server phase ──────────────────────────────────
+
+  const syncScreenForPhase = useCallback(
+    (phase: MatchPhase): void => {
+      if (phase === 'lobby') {
+        setResult(null)
+        go('lobby')
+      } else if (phase === 'countdown' || phase === 'playing') {
+        setShowEnrollment(false)
+        go('battle')
+      } else {
+        setShowEnrollment(false)
+        go('results')
+      }
+    },
+    [go]
+  )
+
+  // ── Server messages ────────────────────────────────────────────────────
 
   const handleServerMessage = useCallback(
-    (msg: ServerMessage) => {
-      switch (msg.type) {
-        case 'room':
-        case 'match-start':
-          onRoomState(msg.room)
+    (event: ServerMessage): void => {
+      switch (event.type) {
+        case 'welcome': {
+          selfIdRef.current = event.selfId
+          setSelfId(event.selfId)
+          isHostRef.current = event.isHost
+          setIsHost(event.isHost)
+          applyRoom(event.room)
+          setGallery(event.gallery)
+          setJoinError(null)
+
+          if (event.room.phase === 'lobby') go('lobby')
+          else if (event.room.phase === 'ended') {
+            if (event.room.result) {
+              setResult(event.room.result)
+              // A reload/reconnect after match-end should still persist the
+              // result locally.
+              saveMatchOnce(event.room.result)
+            }
+            go('results')
+          } else go('battle')
+
+          // Re-publish a previously saved enrolment after a rejoin.
+          const local = appearanceRef.current
+          if (local) sendAppearance(local)
           break
-        case 'shot-result':
-          if (msg.hit) {
+        }
+
+        case 'room': {
+          applyRoom(event.room)
+          syncScreenForPhase(event.room.phase)
+          break
+        }
+
+        case 'gallery': {
+          setGallery(event.gallery)
+          break
+        }
+
+        case 'match-start': {
+          applyRoom(event.room)
+          setShowEnrollment(false)
+          go('battle')
+          break
+        }
+
+        case 'shot-result': {
+          if (event.hit) {
             audio.hit()
-          } else if (msg.reason === 'friendly') {
+            if (event.killed) audio.kill()
+          } else if (event.reason === 'friendly') {
             audio.friendly()
-          } else {
+          } else if (event.reason !== 'cooldown') {
             audio.miss()
           }
           break
+        }
+
         case 'damage': {
-          const self = findSelf(room?.players ?? [], selfId)
-          if (self && self.id === selfId) {
+          if (event.targetId === selfIdRef.current) {
             audio.damage()
+            if (event.killed) audio.error()
           }
           break
         }
-        case 'respawn':
-          audio.respawn()
+
+        case 'respawn': {
+          if (event.playerId === selfIdRef.current) audio.respawn()
           break
-        case 'match-end':
-          audio.error()
-          void storage.addHistory(msg.result).then((h) => setHistory(h))
-          setScreen({ name: 'results' })
+        }
+
+        case 'match-end': {
+          setResult(event.result)
+          const currentRoom = roomRef.current
+          if (currentRoom) {
+            applyRoom({ ...currentRoom, phase: 'ended', result: event.result })
+          }
+          saveMatchOnce(event.result)
+          go('results')
           break
-        case 'error':
-          showToast(msg.message, 'error')
+        }
+
+        case 'error': {
+          showToast(event.message, 'error', 4200)
+          break
+        }
+
+        default:
           break
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [room, selfId, onRoomState, showToast]
+    [applyRoom, go, saveMatchOnce, sendAppearance, showToast, syncScreenForPhase]
   )
 
-  // ── Settings update ───────────────────────────────────────────────────
-
-  const updateSettings = useCallback(
-    (patch: Partial<AppSettings>) => {
-      setSettings((prev) => (prev ? { ...prev, ...patch } : prev))
+  const handleNetEvent = useCallback(
+    (event: NetEvent): void => {
+      if (event.type === 'socket-closed') {
+        showToast(
+          event.reason
+            ? `与服务端断开连接：${event.reason}`
+            : '与服务端断开连接',
+          'error',
+          4200
+        )
+        netRef.current?.close()
+        netRef.current = null
+        resetSession()
+        go('home')
+        return
+      }
+      if (event.type === 'socket-error') {
+        showToast(event.message, 'error', 4200)
+        netRef.current?.close()
+        netRef.current = null
+        resetSession()
+        go('home')
+        return
+      }
+      handleServerMessage(event)
     },
-    []
+    [go, handleServerMessage, resetSession, showToast]
   )
 
-  // ── Profile name change ───────────────────────────────────────────────
+  // ── Join / leave ───────────────────────────────────────────────────────
 
-  const updateName = useCallback(
-    async (name: string) => {
-      if (!profile) return
-      const updated = { ...profile, name, updatedAt: Date.now() }
-      await storage.saveProfile(updated)
-      setProfile(updated)
-      // Sync to server if in room.
-      if (netRef.current?.isOpen) {
-        netRef.current.send({ type: 'set-name', name })
+  const connectAndJoin = useCallback(
+    async (address: string, roomCode: string): Promise<void> => {
+      if (connectingRef.current) return
+      const currentProfile = profileRef.current
+      if (!currentProfile) return
+
+      let url: string
+      try {
+        url = normalizeHostAddress(address)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '地址格式不正确'
+        setJoinError(message)
+        showToast(message, 'error')
+        return
+      }
+
+      connectingRef.current = true
+      setConnecting(true)
+      setJoinError(null)
+
+      const client = new NetClient()
+      netRef.current = client
+      let joinedOnce = false
+      const detach = client.on((event) => {
+        if (event.type === 'welcome') joinedOnce = true
+        // Ignore connection failures here; connect()'s rejection reports them
+        // once, with a useful message.
+        if (!joinedOnce) return
+        handleNetEvent(event)
+      })
+
+      try {
+        await client.connect(url, {
+          roomCode,
+          playerId: currentProfile.id,
+          name: currentProfile.name
+        })
+        if (!client.isJoined) throw new Error('连接已关闭')
+        showToast(`已加入房间 ${roomCode}`, 'success')
+      } catch (error) {
+        detach()
+        client.close()
+        if (netRef.current === client) netRef.current = null
+        const message =
+          error instanceof Error ? error.message : '连接失败，请检查地址和网络'
+        setJoinError(message)
+        showToast(message, 'error', 4200)
+      } finally {
+        connectingRef.current = false
+        setConnecting(false)
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [profile]
+    [handleNetEvent, showToast]
   )
 
-  // ── Render loading ────────────────────────────────────────────────────
+  const leaveRoom = useCallback((): void => {
+    const client = netRef.current
+    if (client?.isOpen) client.send({ type: 'leave' })
+    client?.close()
+    netRef.current = null
+    resetSession()
+    go('home')
+  }, [go, resetSession])
 
-  if (!profile || !settings) {
+  const returnToLobby = useCallback((): void => {
+    if (!isHostRef.current) {
+      showToast('只有房主可以返回大厅', 'error')
+      return
+    }
+    const client = netRef.current
+    if (!client?.isOpen) {
+      showToast('网络未连接', 'error')
+      return
+    }
+    if (!client.send({ type: 'return-lobby' })) {
+      showToast('返回大厅失败，请重试', 'error')
+    }
+  }, [showToast])
+
+  // ── Default room address for the LAN proxy ─────────────────────────────
+
+  const initialAddress = useMemo(() => {
+    if (typeof window === 'undefined') return ''
+    const { protocol, host, hostname, port } = window.location
+    const lanHost =
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      /^10\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+    // Only prefill when the page itself looks like a LAN host (the proxy) or
+    // uses a non-standard HTTPS port.  A public static host should not
+    // silently become the room address.
+    if (protocol === 'https:' && (lanHost || (port && port !== '443'))) return host
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return `${hostname}:17890`
+    }
+    return ''
+  }, [])
+
+  // ── Render ─────────────────────────────────────────────────────────────
+
+  if (initError) {
     return (
-      <div style={styles.center}>
-        <h1 style={styles.title}>SNAPFIRE</h1>
-        <p style={styles.sub}>加载中…</p>
+      <div className="fatal-screen">
+        <h1 className="fatal-screen__title">SNAPFIRE</h1>
+        <p className="fatal-screen__message">{initError}</p>
+        <button className="primary-button" onClick={() => window.location.reload()}>
+          重新加载
+        </button>
       </div>
     )
   }
 
-  // ── Render screen ─────────────────────────────────────────────────────
+  if (!profile || !settings) {
+    return (
+      <div className="loading-screen">
+        <h1 className="loading-screen__title">SNAPFIRE</h1>
+        <p className="tiny muted">加载本地数据…</p>
+      </div>
+    )
+  }
 
   return (
-    <div style={styles.root}>
-      {screen.name === 'home' && (
+    <>
+      {screen === 'home' && <InstallPrompt />}
+
+      {screen === 'home' && (
         <HomeScreen
           profile={profile}
-          settings={settings}
           history={history}
-          onCombat={() => setScreen({ name: 'room-entry' })}
+          onCombat={() => go('room-entry')}
           onSettings={() => setShowSettings(true)}
           onHistory={() => setShowHistory(true)}
           onNameChange={updateName}
         />
       )}
-      {screen.name === 'room-entry' && (
+
+      {screen === 'room-entry' && (
         <RoomEntryScreen
-          onJoin={(addr, code) => {
-            setScreen({ name: 'lobby' })
-            void connectAndJoin(addr, code, profile.id, profile.name)
+          initialAddress={initialAddress}
+          busy={connecting}
+          error={joinError}
+          onJoin={(address, code) => void connectAndJoin(address, code)}
+          onBack={() => {
+            setJoinError(null)
+            go('home')
           }}
-          onBack={() => setScreen({ name: 'home' })}
         />
       )}
-      {screen.name === 'lobby' && room && (
+
+      {screen === 'lobby' && room && (
         <LobbyScreen
           room={room}
           selfId={selfId}
           isHost={isHost}
-          gallery={gallery}
+          appearance={appearance}
+          onEnroll={() => setShowEnrollment(true)}
+          onSyncAppearance={syncAppearance}
           onReady={(ready) => netRef.current?.send({ type: 'set-ready', ready })}
           onTeam={(team) => netRef.current?.send({ type: 'set-team', team })}
           onLeave={leaveRoom}
         />
       )}
-      {screen.name === 'battle' && room && (
-        <BattleScreen
-          room={room}
-          selfId={selfId}
-          gallery={gallery}
-          quality={settings.detectionQuality}
-          onLeave={leaveRoom}
-          onFireShot={(targetId) => netRef.current?.send({ type: 'shot', targetId }) ?? false}
-        />
+
+      {screen === 'lobby' && !room && (
+        <div className="loading-screen">
+          <p className="tiny muted">等待房间状态…</p>
+          <button className="ghost-button" onClick={leaveRoom}>
+            返回首页
+          </button>
+        </div>
       )}
-      {screen.name === 'results' && result && (
-        <ResultsScreen result={result} onBack={leaveRoom} />
+
+      {screen === 'battle' && room && (
+        <Suspense fallback={<BattleLoading />}>
+          <BattleScreen
+            room={room}
+            selfId={selfId}
+            gallery={gallery}
+            quality={settings.detectionQuality}
+            cameraDeviceId={settings.cameraDeviceId}
+            onLeave={leaveRoom}
+            onFireShot={(targetId) =>
+              netRef.current?.send({ type: 'shot', targetId }) ?? false
+            }
+            onNotify={showToast}
+          />
+        </Suspense>
       )}
-      {toast && <Toast message={toast.message} kind={toast.kind} />}
-      {showSettings && settings && (
+
+      {screen === 'results' &&
+        (result ? (
+          <ResultsScreen
+            result={result}
+            selfId={selfId}
+            isHost={isHost}
+            onReturnLobby={returnToLobby}
+            onLeave={leaveRoom}
+          />
+        ) : (
+          <div className="loading-screen">
+            <p className="tiny muted">正在结算…</p>
+          </div>
+        ))}
+
+      {showSettings && (
         <SettingsModal
           settings={settings}
-          onChange={(patch) => setSettings((prev) => (prev ? { ...prev, ...patch } : prev))}
+          onChange={updateSettings}
           onClose={() => setShowSettings(false)}
         />
       )}
+
       {showHistory && (
         <HistoryModal
           matches={history.matches}
+          selfId={profile.id}
           onClose={() => setShowHistory(false)}
         />
       )}
-    </div>
-  )
-}
 
-// ── Mini screen components ─────────────────────────────────────────────────
-
-function HomeScreen({
-  profile,
-  history,
-  onCombat,
-  onSettings,
-  onHistory,
-  onNameChange
-}: {
-  profile: ProfileData
-  settings: AppSettings
-  history: { matches: import('@shared/types').MatchResult[] }
-  onCombat: () => void
-  onSettings: () => void
-  onHistory: () => void
-  onNameChange: (name: string) => void
-}): React.JSX.Element {
-  const [editing, setEditing] = useState(false)
-  const [name, setName] = useState(profile.name)
-
-  const total = history.matches.length
-  const totalKills = history.matches.reduce((s, m) => {
-    const p = m.players.find((p) => p.id === profile.id)
-    return s + (p?.kills ?? 0)
-  }, 0)
-  const totalDeaths = history.matches.reduce((s, m) => {
-    const p = m.players.find((p) => p.id === profile.id)
-    return s + (p?.deaths ?? 0)
-  }, 0)
-
-  return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <h1 style={styles.title}>SNAPFIRE</h1>
-        <p style={styles.sub}>Mobile — MIX REALITY COMBAT</p>
-      </div>
-
-      {/* Profile */}
-      <div style={styles.card}>
-        {editing ? (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              style={{ flex: 1 }}
-              autoFocus
-            />
-            <button className="primary-button" onClick={() => { onNameChange(name); setEditing(false) }}>
-              保存
-            </button>
-            <button className="ghost-button" onClick={() => { setName(profile.name); setEditing(false) }}>
-              取消
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={styles.avatar}>{profile.name.slice(0, 2).toUpperCase()}</div>
-            <span style={{ fontSize: 18, fontWeight: 600 }}>{profile.name}</span>
-            <button className="ghost-button" onClick={() => setEditing(true)} style={{ marginLeft: 'auto' }}>
-              编辑
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Stats */}
-      <div style={styles.card}>
-        <div style={styles.statRow}>
-          <span>总场次</span><strong>{total}</strong>
-        </div>
-        <div style={styles.statRow}>
-          <span>击杀</span><strong>{totalKills}</strong>
-        </div>
-        <div style={styles.statRow}>
-          <span>死亡</span><strong>{totalDeaths}</strong>
-        </div>
-      </div>
-
-      {/* Combat entry */}
-      <button className="primary-button" style={styles.combatBtn} onClick={onCombat}>
-        团战
-      </button>
-
-      {/* Quick links */}
-      <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-        <button className="secondary-button" style={styles.fab} onClick={onHistory}>
-          战绩
-        </button>
-        <button className="secondary-button" style={styles.fab} onClick={onSettings}>
-          设置
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function RoomEntryScreen({
-  onJoin,
-  onBack
-}: {
-  onJoin: (address: string, code: string) => void
-  onBack: () => void
-}): React.JSX.Element {
-  const [address, setAddress] = useState('')
-  const [code, setCode] = useState('')
-
-  return (
-    <div style={styles.container}>
-      <button className="ghost-button" style={styles.backBtn} onClick={onBack}>
-        ← 返回
-      </button>
-      <h2 style={styles.heading}>加入房间</h2>
-      <div style={styles.card}>
-        <div style={{ marginBottom: 12 }}>
-          <label style={styles.label}>房主地址</label>
-          <input
-            style={{ width: '100%' }}
-            placeholder="192.168.1.20:17890"
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
+      {showEnrollment && (
+        <Suspense fallback={<ModalLoading />}>
+          <EnrollmentModal
+            cameraDeviceId={settings.cameraDeviceId}
+            existing={appearance}
+            onClose={() => setShowEnrollment(false)}
+            onSave={saveAppearance}
           />
-        </div>
-        <div style={{ marginBottom: 16 }}>
-          <label style={styles.label}>房间号（4 位）</label>
-          <input
-            style={{ width: '100%', textAlign: 'center', letterSpacing: 8, fontSize: 20 }}
-            maxLength={4}
-            placeholder="0000"
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ''))}
-          />
-        </div>
-        <button
-          className="primary-button"
-          style={{ width: '100%' }}
-          disabled={address.length < 3 || code.length !== 4}
-          onClick={() => onJoin(address, code)}
-        >
-          加入
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function LobbyScreen({
-  room,
-  selfId,
-  isHost,
-  gallery,
-  onReady,
-  onTeam,
-  onLeave
-}: {
-  room: RoomPublicState
-  selfId: string
-  isHost: boolean
-  gallery: GalleryEntry[]
-  onReady: (ready: boolean) => void
-  onTeam: (team: Team) => void
-  onLeave: () => void
-}): React.JSX.Element {
-  const self = room.players.find((p) => p.id === selfId)
-  const myAppearance = gallery.find((g) => g.id === selfId)
-
-  return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <h2 style={styles.heading}>房间 {room.roomCode}</h2>
-        <button className="ghost-button" onClick={onLeave}>离开</button>
-      </div>
-
-      {/* Players */}
-      <div style={styles.card}>
-        <h3 style={{ marginBottom: 8, fontSize: 14, color: 'var(--text-secondary)' }}>玩家列表</h3>
-        {room.players.map((p) => (
-          <div key={p.id} style={styles.playerRow}>
-            <span style={{ ...styles.teamDot, background: p.team === 'red' ? 'var(--red)' : p.team === 'blue' ? 'var(--blue)' : 'var(--team-neutral)' }} />
-            <span style={{ flex: 1 }}>{p.name}</span>
-            {p.isHost && <span style={{ fontSize: 11, color: 'var(--accent)' }}>房主</span>}
-            <span style={{ fontSize: 12, color: p.connected ? 'var(--success)' : 'var(--error)' }}>
-              {p.connected ? (p.ready ? '已准备' : '未准备') : '离线'}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* Team selection */}
-      {self && !self.team && (
-        <div style={styles.card}>
-          <h3 style={{ marginBottom: 8, fontSize: 14 }}>选择队伍</h3>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              className="secondary-button"
-              style={{ flex: 1, borderColor: 'var(--red)', color: 'var(--red)' }}
-              onClick={() => onTeam('red')}
-            >
-              红队
-            </button>
-            <button
-              className="secondary-button"
-              style={{ flex: 1, borderColor: 'var(--blue)', color: 'var(--blue)' }}
-              onClick={() => onTeam('blue')}
-            >
-              蓝队
-            </button>
-          </div>
-        </div>
+        </Suspense>
       )}
 
-      {/* Ready button */}
-      {self && self.team && (
-        <button
-          className={self.ready ? 'secondary-button' : 'primary-button'}
-          style={{ width: '100%' }}
-          onClick={() => onReady(!self.ready)}
+      {toast && (
+        <div
+          key={toast.id}
+          className={`toast toast--${toast.kind}`}
+          role="status"
+          aria-live="polite"
         >
-          {self.ready ? '取消准备' : '准备'}
-        </button>
+          {toast.message}
+        </div>
       )}
-
-      {/* Settings (read-only) */}
-      <div style={styles.card}>
-        <h3 style={{ marginBottom: 8, fontSize: 14 }}>比赛设置</h3>
-        <div style={styles.statRow}>
-          <span>时长</span><strong>{room.settings.durationMin} 分钟</strong>
-        </div>
-        <div style={styles.statRow}>
-          <span>击杀上限</span><strong>{room.settings.killLimit} 杀</strong>
-        </div>
-      </div>
-
-      {/* Enrollment status */}
-      <div style={styles.card}>
-        <h3 style={{ marginBottom: 8, fontSize: 14 }}>建档状态</h3>
-        <div style={styles.statRow}>
-          <span>本人</span>
-          <strong style={{ color: myAppearance ? 'var(--success)' : 'var(--warning)' }}>
-            {myAppearance ? '已建档' : '未建档'}
-          </strong>
-        </div>
-      </div>
-    </div>
+    </>
   )
 }
 
-function BattleScreenPlaceholder(): React.JSX.Element {
+function BattleLoading(): React.JSX.Element {
   return (
-    <div style={{ ...styles.center, flexDirection: 'column' }}>
-      <h1 style={styles.title}>战斗页</h1>
-      <p style={{ opacity: 0.5 }}>摄像头 + AR + 触屏输入（待实现）</p>
+    <div className="loading-screen loading-screen--fixed">
+      <h1 className="loading-screen__title">SNAPFIRE</h1>
+      <p className="tiny muted">正在加载战斗模块…</p>
     </div>
   )
 }
 
-function ResultsScreen({
-  result,
-  onBack
-}: {
-  result: MatchResult
-  onBack: () => void
-}): React.JSX.Element {
+function ModalLoading(): React.JSX.Element {
   return (
-    <div style={styles.container}>
-      <h2 style={{ ...styles.heading, color: result.winner === 'red' ? 'var(--red)' : result.winner === 'blue' ? 'var(--blue)' : 'var(--text-secondary)' }}>
-        {result.winner === 'red' ? '红队' : result.winner === 'blue' ? '蓝队' : '平局'} 获胜
-      </h2>
-      <div style={{ ...styles.card, textAlign: 'center', fontSize: 32, fontWeight: 700, margin: '16px 0' }}>
-        {result.score.red} : {result.score.blue}
-      </div>
-      {result.players.map((p) => (
-        <div key={p.id} style={styles.playerRow}>
-          <span style={{ ...styles.teamDot, background: p.team === 'red' ? 'var(--red)' : 'var(--blue)' }} />
-          <span style={{ flex: 1 }}>{p.name}</span>
-          <span>{p.kills}/{p.deaths} ({Math.round(p.accuracy * 100)}%)</span>
-        </div>
-      ))}
-      <button className="primary-button" style={{ width: '100%', marginTop: 16 }} onClick={onBack}>
-        返回
-      </button>
+    <div className="loading-screen loading-screen--fixed">
+      <p className="tiny muted">正在加载建档模块…</p>
     </div>
   )
-}
-
-// ── Toast ──────────────────────────────────────────────────────────────────
-
-function Toast({ message, kind }: { message: string; kind: 'info' | 'success' | 'error' }): React.JSX.Element {
-  const bg = kind === 'success' ? 'var(--success)' : kind === 'error' ? 'var(--error)' : 'var(--blue)'
-  return (
-    <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: bg, color: '#fff', padding: '10px 20px', borderRadius: 6, fontSize: 13, zIndex: 9999 }}>
-      {message}
-    </div>
-  )
-}
-
-// ── Shared styles ──────────────────────────────────────────────────────────
-
-const styles: Record<string, React.CSSProperties> = {
-  root: {
-    width: '100%',
-    height: '100%',
-    background: 'var(--bg-primary)',
-    color: 'var(--text-primary)',
-    fontFamily: 'Bahnschrift, "Microsoft YaHei", "Segoe UI", sans-serif',
-    overflow: 'auto'
-  },
-  container: {
-    maxWidth: 480,
-    margin: '0 auto',
-    padding: '16px',
-    minHeight: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12
-  },
-  center: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100%'
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between'
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 700,
-    margin: 0
-  },
-  sub: {
-    fontSize: 11,
-    opacity: 0.5,
-    margin: '2px 0 0'
-  },
-  heading: {
-    fontSize: 18,
-    fontWeight: 600,
-    margin: 0
-  },
-  card: {
-    background: 'var(--bg-panel)',
-    border: '1px solid rgba(255,255,255,0.06)',
-    borderRadius: 6,
-    padding: 16
-  },
-  statRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    padding: '6px 0',
-    fontSize: 14,
-    borderBottom: '1px solid rgba(255,255,255,0.04)'
-  },
-  playerRow: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: '8px 0',
-    fontSize: 14,
-    borderBottom: '1px solid rgba(255,255,255,0.04)'
-  },
-  teamDot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    marginRight: 8,
-    flexShrink: 0
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: '50%',
-    background: 'var(--accent)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontWeight: 700,
-    fontSize: 14,
-    color: '#000'
-  },
-  combatBtn: {
-    width: '100%',
-    padding: 16,
-    fontSize: 18,
-    marginTop: 8
-  },
-  fab: {
-    flex: 1,
-    textAlign: 'center',
-    padding: '12px 0'
-  },
-  backBtn: {
-    alignSelf: 'flex-start',
-    marginBottom: 8
-  },
-  label: {
-    display: 'block',
-    fontSize: 12,
-    color: 'var(--text-secondary)',
-    marginBottom: 4
-  }
 }

@@ -361,3 +361,22 @@ SnapFire Mobile 是 SnapFire 桌面版的**手机浏览器客户端**。它不�
 5. **局域网与防火墙**：与桌面版相同，Windows 防火墙可能拦截房主端口。
 6. **PWA 支持**：Chrome for Android 支持完整；Safari on iOS 支持部分 PWA 特性（无 service worker 推送，但可添加到主屏）。
 7. **识别正确性**：与桌面版相同，10 米识别主要依赖衣着特征；逆光、暗光、衣服颜色过近会降低识别率。
+
+---
+
+## 附录 C：部署安全上下文补充（2026-10-24）
+
+手机浏览器只在**安全来源**下允许摄像头和 Service Worker：
+
+- `https://` 页面或 `localhost` 才能调用 `getUserMedia`；
+- `https://` 页面不能连接明文 `ws://`，必须使用 `wss://`。
+
+因此“手机直接访问 `http://电脑IP:端口`”在真机上不可用。V1 采用仓库自带的
+独立代理进程（`scripts/lan-proxy.mjs`）：
+
+```
+手机 ──https/wss──> 代理 ──静态 dist/ + ws://127.0.0.1:17890──> 桌面 LanServer
+```
+
+证书使用 mkcert 生成，并在每台手机上安装一次根 CA。详见
+`docs/LAN_DEPLOY.md`。该方案不修改桌面版仓库。

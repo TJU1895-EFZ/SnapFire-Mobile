@@ -25,13 +25,17 @@ export interface VisionFrameResult {
 
 type ResultListener = (result: VisionFrameResult) => void
 
+/**
+ * Phone-tuned presets. The desktop values (130–340ms, 720–1280px) are too
+ * expensive for mobile GPUs; these follow the values in docs/DEV_PLAN.md §5.4.
+ */
 const QUALITY_PRESETS: Record<
   DetectionQuality,
   { intervalMs: number; cropScale: number; maxWidth: number }
 > = {
-  performance: { intervalMs: 340, cropScale: 0.54, maxWidth: 720 },
-  balanced: { intervalMs: 200, cropScale: 0.62, maxWidth: 960 },
-  accurate: { intervalMs: 130, cropScale: 0.7, maxWidth: 1280 }
+  performance: { intervalMs: 500, cropScale: 0.5, maxWidth: 480 },
+  balanced: { intervalMs: 340, cropScale: 0.54, maxWidth: 480 },
+  accurate: { intervalMs: 200, cropScale: 0.62, maxWidth: 720 }
 }
 
 /**
