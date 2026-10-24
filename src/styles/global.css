@@ -1,0 +1,141 @@
+/* SnapFire Mobile — Global Styles */
+
+:root {
+  /* Colors */
+  --bg-primary: #07090a;
+  --bg-secondary: #111518;
+  --bg-panel: rgba(17, 21, 24, 0.92);
+  --text-primary: #e0e0e0;
+  --text-secondary: #8a9199;
+  --accent: #f0a030;
+  --accent-dim: rgba(240, 160, 48, 0.2);
+  --red: #e04040;
+  --blue: #4080e0;
+  --success: #40c060;
+  --error: #e04040;
+  --warning: #f0a030;
+  --amber: #f0a030;
+  --team-red: #e04040;
+  --team-blue: #4080e0;
+  --team-neutral: #8a9199;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: Bahnschrift, "Microsoft YaHei", "Segoe UI", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input {
+  font-family: inherit;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 14px;
+  outline: none;
+}
+
+input:focus {
+  border-color: var(--accent);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 3px;
+}
+
+/* Buttons */
+.primary-button {
+  background: var(--accent);
+  color: #000;
+  padding: 10px 24px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+.primary-button:active {
+  opacity: 0.8;
+}
+
+.secondary-button {
+  background: rgba(255,255,255,0.08);
+  color: var(--text-primary);
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  border: 1px solid rgba(255,255,255,0.12);
+  transition: background 0.15s;
+}
+.secondary-button:active {
+  background: rgba(255,255,255,0.14);
+}
+
+.ghost-button {
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  font-size: 13px;
+  transition: color 0.15s;
+}
+.ghost-button:active {
+  color: var(--text-primary);
+}
+
+/* Panels */
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 6px;
+  padding: 16px;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  z-index: 9999;
+  animation: toastIn 0.2s ease;
+}
+.toast--info { background: rgba(64,128,224,0.9); }
+.toast--success { background: rgba(64,192,96,0.9); }
+.toast--error { background: rgba(224,64,64,0.9); }
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
