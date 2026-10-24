@@ -11,6 +11,7 @@ import { useCamera } from '@mobile/hooks/useCamera'
 import { useServerClock } from '@mobile/hooks/useServerClock'
 import { SettingsModal } from '@mobile/components/SettingsModal'
 import { HistoryModal } from '@mobile/components/HistoryModal'
+import { BattleScreen } from '@mobile/screens/BattleScreen'
 import { NetClient, type NetEvent, type WelcomeMessage } from '@mobile/net/NetClient'
 import { storage } from '@mobile/storage'
 import type {
@@ -335,7 +336,16 @@ export function App(): React.JSX.Element {
           onLeave={leaveRoom}
         />
       )}
-      {screen.name === 'battle' && <BattleScreenPlaceholder />}
+      {screen.name === 'battle' && room && (
+        <BattleScreen
+          room={room}
+          selfId={selfId}
+          gallery={gallery}
+          quality={settings.detectionQuality}
+          onLeave={leaveRoom}
+          onFireShot={(targetId) => netRef.current?.send({ type: 'shot', targetId }) ?? false}
+        />
+      )}
       {screen.name === 'results' && result && (
         <ResultsScreen result={result} onBack={leaveRoom} />
       )}
