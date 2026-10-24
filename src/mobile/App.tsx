@@ -9,6 +9,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { audio } from '@mobile/game/audio'
 import { useCamera } from '@mobile/hooks/useCamera'
 import { useServerClock } from '@mobile/hooks/useServerClock'
+import { SettingsModal } from '@mobile/components/SettingsModal'
+import { HistoryModal } from '@mobile/components/HistoryModal'
 import { NetClient, type NetEvent, type WelcomeMessage } from '@mobile/net/NetClient'
 import { storage } from '@mobile/storage'
 import type {
@@ -103,6 +105,8 @@ export function App(): React.JSX.Element {
   const [history, setHistory] = useState<{ matches: import('@shared/types').MatchResult[] }>({
     matches: []
   })
+  const [showSettings, setShowSettings] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
 
   const netRef = useRef<NetClient | null>(null)
   const phaseRef = useRef<MatchPhase>('lobby')
@@ -306,8 +310,8 @@ export function App(): React.JSX.Element {
           settings={settings}
           history={history}
           onCombat={() => setScreen({ name: 'room-entry' })}
-          onSettings={() => showToast('设置功能开发中', 'info')}
-          onHistory={() => showToast('战绩功能开发中', 'info')}
+          onSettings={() => setShowSettings(true)}
+          onHistory={() => setShowHistory(true)}
           onNameChange={updateName}
         />
       )}
@@ -336,6 +340,19 @@ export function App(): React.JSX.Element {
         <ResultsScreen result={result} onBack={leaveRoom} />
       )}
       {toast && <Toast message={toast.message} kind={toast.kind} />}
+      {showSettings && settings && (
+        <SettingsModal
+          settings={settings}
+          onChange={(patch) => setSettings((prev) => (prev ? { ...prev, ...patch } : prev))}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+      {showHistory && (
+        <HistoryModal
+          matches={history.matches}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   )
 }
