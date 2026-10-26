@@ -374,10 +374,54 @@ try {
   })
 
   await page.goto(PROXY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-  await page.getByRole('button', { name: /团战/ }).waitFor({ timeout: 20_000 })
+  await page.getByRole('button', { name: /常规作战/ }).waitFor({ timeout: 20_000 })
   await page.screenshot({ path: join(ARTIFACTS, '01-home.png') })
 
+  // ── Long March introduction and scene list ───────────────────────────
+  await page
+    .getByRole('button', { name: /长征胜利\s*90\s*周年纪念/ })
+    .click()
+  await page.getByText('历史背景：被迫的战略转移').waitFor({ timeout: 10_000 })
+  await page.getByText(/还需等待 \d+ 秒/).waitFor({ timeout: 5_000 })
+  const nextButton = page.getByRole('button', { name: '下一步' })
+  assert.equal(await nextButton.isDisabled(), true, 'next must stay locked')
+  await page.screenshot({ path: join(ARTIFACTS, '01a-long-march-intro.png') })
+
+  await page.waitForFunction(
+    () => {
+      const button = [...document.querySelectorAll('button')].find((item) =>
+        item.textContent?.includes('下一步')
+      )
+      return button instanceof HTMLButtonElement && !button.disabled
+    },
+    { timeout: 15_000 }
+  )
+  await nextButton.click()
+  await page.getByRole('button', { name: /历史场景/ }).waitFor({ timeout: 10_000 })
+  await page.screenshot({ path: join(ARTIFACTS, '01b-long-march-menu.png') })
+
+  await page.getByRole('button', { name: /历史场景/ }).click()
+  await page.getByText('湘江战役').first().waitFor({ timeout: 10_000 })
+  await page.screenshot({ path: join(ARTIFACTS, '01c-long-march-battles.png') })
+  await page.getByRole('button', { name: '← 返回' }).click()
+  await page.getByRole('button', { name: /历史场景/ }).waitFor({ timeout: 10_000 })
+  await page.getByRole('button', { name: '← 返回' }).click()
+  await page.getByRole('button', { name: /常规作战/ }).waitFor({ timeout: 10_000 })
+
+  // ── Regular combat: four modes, then team battle → urban ─────────────
+  await page.getByRole('button', { name: /常规作战/ }).click()
+  await page.getByRole('button', { name: /单人/ }).waitFor({ timeout: 10_000 })
+  await page.getByRole('button', { name: /单人/ }).click()
+  await page.getByText('单人模式暂未开放，敬请期待').waitFor({ timeout: 5_000 })
+  await page.screenshot({ path: join(ARTIFACTS, '01d-combat-menu.png') })
+
   await page.getByRole('button', { name: /团战/ }).click()
+  await page.getByRole('button', { name: /巷战/ }).waitFor({ timeout: 10_000 })
+  await page.getByRole('button', { name: /野战/ }).click()
+  await page.getByText('野战模式暂未开放，敬请期待').waitFor({ timeout: 5_000 })
+  await page.screenshot({ path: join(ARTIFACTS, '01e-team-menu.png') })
+
+  await page.getByRole('button', { name: /巷战/ }).click()
   await page.getByText('加入房间').first().waitFor({ timeout: 10_000 })
 
   await page.locator('#host-address').fill(`127.0.0.1:${PROXY_PORT}`)
@@ -494,7 +538,7 @@ try {
   await page.screenshot({ path: join(ARTIFACTS, '05-results.png') })
 
   await page.getByRole('button', { name: '离开房间' }).click()
-  await page.getByRole('button', { name: /团战/ }).waitFor({ timeout: 10_000 })
+  await page.getByRole('button', { name: /巷战/ }).waitFor({ timeout: 10_000 })
 
   assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`)
 

@@ -18,10 +18,15 @@ import { audio } from '@mobile/game/audio'
 import { HistoryModal } from '@mobile/components/HistoryModal'
 import { InstallPrompt } from '@mobile/components/InstallPrompt'
 import { SettingsModal } from '@mobile/components/SettingsModal'
+import { CombatMenuScreen } from '@mobile/screens/CombatMenuScreen'
 import { HomeScreen } from '@mobile/screens/HomeScreen'
 import { LobbyScreen } from '@mobile/screens/LobbyScreen'
+import { LongMarchBattlesScreen } from '@mobile/screens/LongMarchBattlesScreen'
+import { LongMarchIntroScreen } from '@mobile/screens/LongMarchIntroScreen'
+import { LongMarchMenuScreen } from '@mobile/screens/LongMarchMenuScreen'
 import { ResultsScreen } from '@mobile/screens/ResultsScreen'
 import { RoomEntryScreen } from '@mobile/screens/RoomEntryScreen'
+import { TeamModeScreen } from '@mobile/screens/TeamModeScreen'
 import { NetClient, normalizeHostAddress, type NetEvent } from '@mobile/net/NetClient'
 import { storage } from '@mobile/storage'
 import type {
@@ -48,7 +53,18 @@ const EnrollmentModal = lazy(() =>
   }))
 )
 
-type Screen = 'home' | 'room-entry' | 'lobby' | 'battle' | 'results'
+type Screen =
+  | 'home'
+  | 'combat-menu'
+  | 'team-menu'
+  | 'long-march-intro'
+  | 'long-march-menu'
+  | 'long-march-battles'
+  | 'room-entry'
+  | 'lobby'
+  | 'battle'
+  | 'results'
+type SessionMode = 'urban' | 'long-march'
 type ToastKind = 'info' | 'success' | 'error'
 
 interface ToastState {
@@ -69,6 +85,7 @@ export function App(): React.JSX.Element {
 
   // ── Session / navigation ───────────────────────────────────────────────
   const [screen, setScreen] = useState<Screen>('home')
+  const [sessionMode, setSessionMode] = useState<SessionMode>('urban')
   const [room, setRoom] = useState<RoomPublicState | null>(null)
   const [gallery, setGallery] = useState<GalleryEntry[]>([])
   const [selfId, setSelfId] = useState('')
@@ -508,8 +525,8 @@ export function App(): React.JSX.Element {
     client?.close()
     netRef.current = null
     resetSession()
-    go('home')
-  }, [go, resetSession])
+    go(sessionMode === 'long-march' ? 'long-march-menu' : 'team-menu')
+  }, [go, resetSession, sessionMode])
 
   const returnToLobby = useCallback((): void => {
     if (!isHostRef.current) {
@@ -578,10 +595,57 @@ export function App(): React.JSX.Element {
         <HomeScreen
           profile={profile}
           history={history}
-          onCombat={() => go('room-entry')}
+          onRegularCombat={() => go('combat-menu')}
+          onLongMarch={() => go('long-march-intro')}
           onSettings={() => setShowSettings(true)}
           onHistory={() => setShowHistory(true)}
           onNameChange={updateName}
+        />
+      )}
+
+      {screen === 'combat-menu' && (
+        <CombatMenuScreen
+          onBack={() => go('home')}
+          onTeam={() => go('team-menu')}
+          onPlaceholder={(mode) =>
+            showToast(`${mode}模式暂未开放，敬请期待`, 'info')
+          }
+        />
+      )}
+
+      {screen === 'team-menu' && (
+        <TeamModeScreen
+          onBack={() => go('combat-menu')}
+          onUrban={() => {
+            setSessionMode('urban')
+            go('room-entry')
+          }}
+          onField={() => showToast('野战模式暂未开放，敬请期待', 'info')}
+        />
+      )}
+
+      {screen === 'long-march-intro' && (
+        <LongMarchIntroScreen
+          onBack={() => go('home')}
+          onNext={() => go('long-march-menu')}
+        />
+      )}
+
+      {screen === 'long-march-menu' && (
+        <LongMarchMenuScreen
+          onBack={() => go('home')}
+          onCombat={() => {
+            setSessionMode('long-march')
+            go('room-entry')
+          }}
+          onScenes={() => go('long-march-battles')}
+        />
+      )}
+
+      {screen === 'long-march-battles' && (
+        <LongMarchBattlesScreen
+          onBack={() => go('long-march-menu')}
+          onSelect={(name) => showToast(`「${name}」场景正在开发中`, 'info')}
         />
       )}
 
@@ -593,7 +657,7 @@ export function App(): React.JSX.Element {
           onJoin={(address, code) => void connectAndJoin(address, code)}
           onBack={() => {
             setJoinError(null)
-            go('home')
+            go(sessionMode === 'long-march' ? 'long-march-menu' : 'team-menu')
           }}
         />
       )}

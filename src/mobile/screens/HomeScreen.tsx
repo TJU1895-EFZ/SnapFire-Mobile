@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import type { HistoryData, ProfileData } from '@shared/types'
+import { ModeCard } from '@mobile/components/ModeCard'
 import { formatPercent } from '@mobile/utils/format'
 import { computePlayerStats } from '@mobile/utils/stats'
 
 interface Props {
   profile: ProfileData
   history: HistoryData
-  onCombat: () => void
+  onRegularCombat: () => void
+  onLongMarch: () => void
   onSettings: () => void
   onHistory: () => void
   onNameChange: (name: string) => Promise<void> | void
@@ -15,7 +17,8 @@ interface Props {
 export function HomeScreen({
   profile,
   history,
-  onCombat,
+  onRegularCombat,
+  onLongMarch,
   onSettings,
   onHistory,
   onNameChange
@@ -64,6 +67,26 @@ export function HomeScreen({
           </div>
           <span className="pill pill--warning">LAN</span>
         </header>
+
+        <section className="home-modes">
+          <ModeCard
+            featured
+            tag="战"
+            title="常规作战"
+            subtitle="STANDARD COMBAT"
+            description="单人 · 团战 · 夺旗 · 拆弹"
+            onClick={onRegularCombat}
+          />
+          <ModeCard
+            featured
+            tag="长"
+            title="长征胜利 90 周年纪念"
+            subtitle="1936 — 2026 · 90TH ANNIVERSARY"
+            description="导读 · 常规 · 历史场景"
+            tone="red"
+            onClick={onLongMarch}
+          />
+        </section>
 
         <section className="card">
           {editing ? (
@@ -125,14 +148,6 @@ export function HomeScreen({
             <StatTile label="命中 / 射击" value={`${stats.hits} / ${stats.shots}`} />
           </div>
         </section>
-
-        <button
-          className="primary-button"
-          style={{ width: '100%', minHeight: 56, fontSize: 18, marginTop: 4 }}
-          onClick={onCombat}
-        >
-          团战 · 加入局域网房间
-        </button>
 
         <div className="button-row">
           <button

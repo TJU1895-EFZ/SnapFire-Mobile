@@ -524,6 +524,262 @@ input[type='range'] {
   box-shadow: 0 0 6px rgba(240, 160, 48, 0.9);
 }
 
+/* ── Mode menus ────────────────────────────────────────────────────────── */
+
+.home-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.mode-grid--single { grid-template-columns: 1fr; }
+
+@media (max-width: 360px) {
+  .mode-grid { grid-template-columns: 1fr; }
+}
+
+.mode-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  min-height: 112px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  text-align: left;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.mode-card:active {
+  transform: scale(0.985);
+  background: rgba(255, 255, 255, 0.09);
+}
+.mode-card--featured {
+  min-height: 132px;
+  padding: 16px 18px;
+  gap: 4px;
+}
+.mode-card--planned {
+  border-style: dashed;
+  opacity: 0.78;
+}
+.mode-card--accent { border-color: rgba(240, 160, 48, 0.28); }
+.mode-card--blue { border-color: rgba(64, 128, 224, 0.28); }
+.mode-card--red {
+  border-color: rgba(224, 64, 64, 0.32);
+  background: linear-gradient(145deg, rgba(224, 64, 64, 0.13), rgba(240, 160, 48, 0.04));
+}
+
+.mode-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 4px;
+}
+.mode-card__tag {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: #101214;
+  background: var(--accent);
+}
+.mode-card--red .mode-card__tag {
+  color: #fff;
+  background: #d64a4a;
+}
+.mode-card--blue .mode-card__tag {
+  color: #fff;
+  background: var(--blue);
+}
+.mode-card__badge {
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+}
+.mode-card__badge--ready { color: var(--success); background: rgba(64, 192, 96, 0.12); }
+.mode-card__badge--planned { color: var(--text-secondary); background: rgba(255, 255, 255, 0.07); }
+.mode-card__title {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.mode-card--featured .mode-card__title { font-size: 20px; }
+.mode-card__subtitle {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+.mode-card__desc {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* ── Long March intro / scenes ─────────────────────────────────────────── */
+
+.long-march-hero {
+  padding: 18px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(224, 64, 64, 0.3);
+  background:
+    linear-gradient(135deg, rgba(190, 40, 40, 0.28), rgba(240, 160, 48, 0.08) 55%, rgba(255, 255, 255, 0.03));
+}
+.long-march-hero--compact { padding: 14px 16px; }
+.long-march-hero__years {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: #f0b0a0;
+}
+.long-march-hero__title {
+  margin: 6px 0 4px;
+  font-size: 24px;
+  line-height: 1.25;
+}
+.long-march-hero--compact .long-march-hero__title { font-size: 20px; }
+.long-march-hero__subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.article {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 2px 2px 8px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.article__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.article__title {
+  padding-left: 10px;
+  border-left: 3px solid var(--red);
+  font-size: 16px;
+  color: #f3d6a0;
+}
+.article__paragraph {
+  font-size: 14px;
+  line-height: 1.85;
+  color: #c8cdd2;
+  text-align: justify;
+}
+
+.intro-inner { padding-bottom: 118px; }
+
+.dwell-bar {
+  position: fixed;
+  left: 50%;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 24px));
+  z-index: 800;
+  padding: 10px 12px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(7, 9, 10, 0.94);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35);
+}
+.dwell-bar__track {
+  height: 4px;
+  margin-bottom: 8px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+.dwell-bar__fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--red), var(--accent));
+  transition: width 0.2s linear;
+}
+.dwell-bar__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.dwell-bar__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dwell-bar__copy strong { font-size: 13px; }
+.dwell-bar__copy span { font-size: 11px; color: var(--text-secondary); }
+.dwell-bar .primary-button {
+  flex: 0 0 auto;
+  min-height: 44px;
+}
+
+.battle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.battle-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.035);
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.battle-card:active { background: rgba(255, 255, 255, 0.08); }
+.battle-card__index {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.battle-card__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.battle-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.battle-card__head strong { font-size: 16px; }
+.battle-card__meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.battle-card__summary {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #b9c0c6;
+}
+
 /* ── Misc ──────────────────────────────────────────────────────────────── */
 
 .toast {
