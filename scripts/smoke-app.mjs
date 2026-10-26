@@ -26,6 +26,12 @@ const ARTIFACTS = join(ROOT_DIR, 'artifacts')
 const PROXY_PORT = Number(process.env.SMOKE_APP_PORT || 9445)
 const PROXY_URL = `https://127.0.0.1:${PROXY_PORT}`
 const ROOM_CODE = '1234'
+/**
+ * Optional Y4M file for the fake camera. When set, the Long March session
+ * enrolls against that frame and checks the uniform overlay on a real person.
+ * Example: FAKE_VIDEO=...red-army.y4m npm run smoke:app
+ */
+const FAKE_VIDEO = process.env.FAKE_VIDEO ? resolve(process.env.FAKE_VIDEO) : ''
 
 const BROWSER_CANDIDATES = [
   process.env.BROWSER_PATH,
@@ -55,6 +61,7 @@ let result = null
 let joinedId = null
 let countdownTimer = null
 const shots = []
+let gallery = []
 
 function makePlayer(id, name, team, options = {}) {
   return {
@@ -159,6 +166,25 @@ function endMatch() {
   broadcastRoom()
 }
 
+function resetToLobby() {
+  phase = 'lobby'
+  countdownEndsAt = null
+  matchEndsAt = null
+  result = null
+  for (const player of players.values()) {
+    player.hp = 100
+    player.alive = true
+    player.kills = 0
+    player.deaths = 0
+    player.shots = 0
+    player.hits = 0
+    player.respawnAt = null
+    player.invulnerableUntil = null
+    player.ready = player.isHost
+  }
+  broadcastRoom()
+}
+
 const backend = new WebSocketServer({ host: '127.0.0.1', port: 0 })
 await new Promise((resolvePort, reject) => {
   backend.once('listening', resolvePort)
@@ -179,10 +205,11 @@ backend.on('connection', (socket) => {
 
     switch (message.type) {
       case 'join': {
+        if (phase === 'ended') resetToLobby()
         joinedId = message.playerId
         players.set(
           joinedId,
-          makePlayer(joinedId, message.name || 'Mobile', 'red', {
+          makePlayer(joinedId, message.name || 'Mobile', null, {
             appearanceReady: true
           })
         )
@@ -206,7 +233,7 @@ backend.on('connection', (socket) => {
           selfId: joinedId,
           isHost: false,
           room: roomState(),
-          gallery: []
+          gallery
         })
         broadcastRoom()
         break
@@ -216,6 +243,11 @@ backend.on('connection', (socket) => {
         if (player) {
           player.team = message.team
           player.ready = false
+          const entry = gallery.find((item) => item.id === joinedId)
+          if (entry) {
+            entry.team = player.team
+            broadcast({ type: 'gallery', gallery })
+          }
           broadcastRoom()
         }
         break
@@ -233,6 +265,28 @@ backend.on('connection', (socket) => {
         if (player) {
           player.appearanceReady = true
           player.ready = false
+          if (FAKE_VIDEO) {
+            // The fake camera shows the tester's own enrolled frame. Attribute
+            // it to another room player so self-exclusion does not hide the
+            // overlay we want to inspect.
+            gallery = [
+              {
+                id: 'bot-alpha',
+                name: 'Bot Alpha',
+                team: 'blue',
+                appearance: message.appearance
+              }
+            ]
+          } else {
+            gallery = gallery.filter((item) => item.id !== joinedId)
+            gallery.push({
+              id: joinedId,
+              name: player.name,
+              team: player.team,
+              appearance: message.appearance
+            })
+          }
+          broadcast({ type: 'gallery', gallery })
           broadcastRoom()
         }
         break
@@ -352,6 +406,9 @@ try {
     args: [
       '--use-fake-ui-for-media-stream',
       '--use-fake-device-for-media-stream',
+      ...(FAKE_VIDEO
+        ? [`--use-file-for-fake-video-capture=${FAKE_VIDEO.replace(/\\/g, '/')}`]
+        : []),
       '--ignore-certificate-errors',
       '--enable-unsafe-swiftshader',
       '--disable-dev-shm-usage'
@@ -370,7 +427,9 @@ try {
   page.on('console', (message) => {
     const text = message.text()
     if (message.type() === 'error') consoleErrors.push(text)
-    if (text.includes('[vision]')) visionLogs.push(text)
+    if (text.includes('[vision]') || text.includes('[overlay]')) {
+      visionLogs.push(text)
+    }
   })
 
   await page.goto(PROXY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
@@ -405,6 +464,100 @@ try {
   await page.screenshot({ path: join(ARTIFACTS, '01c-long-march-battles.png') })
   await page.getByRole('button', { name: '← 返回' }).click()
   await page.getByRole('button', { name: /历史场景/ }).waitFor({ timeout: 10_000 })
+
+  // Long March 常规: Red Army / KMT naming and the uniform overlay canvas.
+  await page.getByRole('button', { name: /常规/ }).click()
+  await page.getByText('加入房间').first().waitFor({ timeout: 10_000 })
+  await page.locator('#host-address').fill(`127.0.0.1:${PROXY_PORT}`)
+  await page.locator('#room-code').fill(ROOM_CODE)
+  await page.getByRole('button', { name: '加入', exact: true }).click()
+  await page.getByText(`房间 ${ROOM_CODE}`).first().waitFor({ timeout: 10_000 })
+  await page.getByRole('button', { name: '红军', exact: true }).waitFor({ timeout: 10_000 })
+  await page.getByRole('button', { name: '国民党军', exact: true }).waitFor({ timeout: 10_000 })
+  const longMarchTeam = FAKE_VIDEO ? '国民党军' : '红军'
+  await page.getByRole('button', { name: longMarchTeam, exact: true }).click()
+  await page
+    .getByText(
+      FAKE_VIDEO ? /红军 0 \/ 国民党军 3/ : /红军 1 \/ 国民党军 2/
+    )
+    .waitFor({ timeout: 10_000 })
+  await page.screenshot({ path: join(ARTIFACTS, '02a-long-march-lobby.png') })
+
+  if (FAKE_VIDEO) {
+    const enrollButton = page.getByRole('button', { name: /建档/ }).first()
+    await enrollButton.waitFor({ timeout: 10_000 })
+    await enrollButton.click()
+    await page.getByText('人脸与衣着建档').waitFor({ timeout: 15_000 })
+    await page.waitForFunction(
+      () => {
+        const video = document.querySelector('.enroll-camera video')
+        return (
+          video instanceof HTMLVideoElement &&
+          video.readyState >= 2 &&
+          video.videoWidth > 0
+        )
+      },
+      { timeout: 20_000 }
+    )
+    await page.waitForFunction(
+      () => {
+        const button = [...document.querySelectorAll('button')].find((item) =>
+          item.textContent?.includes('采集正面')
+        )
+        return button instanceof HTMLButtonElement && !button.disabled
+      },
+      { timeout: 30_000 }
+    )
+    await page.getByRole('button', { name: /采集正面/ }).click()
+    await page.waitForFunction(
+      () => document.querySelectorAll('.capture-button.is-done').length >= 1,
+      { timeout: 30_000 }
+    )
+    await page.getByRole('button', { name: /采集背面/ }).click()
+    await page.waitForFunction(
+      () => document.querySelectorAll('.capture-button.is-done').length >= 2,
+      { timeout: 30_000 }
+    )
+    await page.getByRole('button', { name: '保存建档' }).click()
+    await page
+      .getByText('人脸与衣着建档')
+      .waitFor({ state: 'detached', timeout: 15_000 })
+    await page.getByText('建档已保存并同步到房间').waitFor({ timeout: 10_000 })
+    await page.screenshot({ path: join(ARTIFACTS, '02a1-long-march-enrolled.png') })
+  }
+
+  startMatch()
+  // The heavy battle chunk may load after the 1.2 s countdown, so wait for
+  // stable post-countdown elements rather than the transient countdown text.
+  const longMarchTrigger = page.locator('[aria-label^="开火"]')
+  await longMarchTrigger.waitFor({ timeout: 20_000 })
+  await page.waitForFunction(
+    () => {
+      const button = document.querySelector('[aria-label^="开火"]')
+      return button instanceof HTMLButtonElement && !button.disabled
+    },
+    { timeout: 20_000 }
+  )
+  await page.locator('[data-uniform-overlay="true"]').waitFor({ timeout: 20_000 })
+  await page.waitForFunction(
+    () => {
+      const canvas = document.querySelector('[data-uniform-overlay="true"]')
+      return (
+        canvas instanceof HTMLCanvasElement &&
+        canvas.width > 0 &&
+        canvas.height > 0
+      )
+    },
+    { timeout: 20_000 }
+  )
+  await wait(FAKE_VIDEO ? 15000 : 2000)
+  await page.screenshot({ path: join(ARTIFACTS, '02b-long-march-battle.png') })
+
+  endMatch()
+  await page.getByText('红军获胜').waitFor({ timeout: 10_000 })
+  await page.screenshot({ path: join(ARTIFACTS, '02c-long-march-results.png') })
+  await page.getByRole('button', { name: '离开房间' }).click()
+  await page.getByRole('button', { name: /历史场景/ }).waitFor({ timeout: 10_000 })
   await page.getByRole('button', { name: '← 返回' }).click()
   await page.getByRole('button', { name: /常规作战/ }).waitFor({ timeout: 10_000 })
 
@@ -430,6 +583,8 @@ try {
 
   await page.getByText(`房间 ${ROOM_CODE}`).first().waitFor({ timeout: 10_000 })
   await page.getByText('Bot Alpha').first().waitFor({ timeout: 10_000 })
+  await page.getByRole('button', { name: '红队', exact: true }).click()
+  await page.getByText(/红队 1 \/ 蓝队 2/).waitFor({ timeout: 10_000 })
   await page.screenshot({ path: join(ARTIFACTS, '02-lobby.png') })
 
   // Enrollment modal: camera should open, then close without saving.
@@ -449,7 +604,6 @@ try {
   // Start the match from the mock host.
   startMatch()
 
-  await page.getByText('比赛开始').waitFor({ timeout: 10_000 })
   const trigger = page.locator('[aria-label^="开火"]')
   await trigger.waitFor({ timeout: 20_000 })
   await page.waitForFunction(

@@ -7,17 +7,20 @@
  */
 
 import { useCallback, useRef, useState } from 'react'
-import type { PlayerPublic } from '@shared/types'
+import type { CombatMode, PlayerPublic } from '@shared/types'
+import { teamShortLabel } from '@mobile/utils/teamLabels'
 
 interface Props {
   players: PlayerPublic[]
   selectedId: string | null
+  mode: CombatMode
   onSelect: (id: string | null) => void
 }
 
 export function TargetSelector({
   players,
   selectedId,
+  mode,
   onSelect
 }: Props): React.JSX.Element {
   const [expanded, setExpanded] = useState(true)
@@ -152,7 +155,7 @@ export function TargetSelector({
                               : 'var(--text-secondary)'
                       }}
                     >
-                      {player.team === 'red' ? '红' : player.team === 'blue' ? '蓝' : '—'}
+                      {player.team ? teamShortLabel(player.team, mode) : '—'}
                     </span>
                     <span
                       className="tiny"

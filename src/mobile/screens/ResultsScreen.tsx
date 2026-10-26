@@ -1,10 +1,12 @@
-import type { MatchResult } from '@shared/types'
+import type { CombatMode, MatchResult } from '@shared/types'
 import { formatPercent } from '@mobile/utils/format'
+import { teamLabel } from '@mobile/utils/teamLabels'
 
 interface Props {
   result: MatchResult
   selfId: string
   isHost: boolean
+  mode: CombatMode
   onReturnLobby: () => void
   onLeave: () => void
 }
@@ -13,12 +15,15 @@ export function ResultsScreen({
   result,
   selfId,
   isHost,
+  mode,
   onReturnLobby,
   onLeave
 }: Props): React.JSX.Element {
   const self = result.players.find((player) => player.id === selfId) ?? null
   const winnerLabel =
-    result.winner === 'draw' ? '平局' : result.winner === 'red' ? '红队获胜' : '蓝队获胜'
+    result.winner === 'draw'
+      ? '平局'
+      : `${teamLabel(result.winner, mode)}获胜`
   const winnerColor =
     result.winner === 'red'
       ? 'var(--red)'
@@ -47,6 +52,10 @@ export function ResultsScreen({
             <span style={{ color: 'var(--blue)' }}>{result.score.blue}</span>
           </div>
           <div className="tiny muted" style={{ marginTop: 6 }}>
+            {teamLabel('red', mode)} {result.score.red} : {result.score.blue}{' '}
+            {teamLabel('blue', mode)}
+          </div>
+          <div className="tiny muted">
             {result.durationMin} 分钟 · {result.killLimit} 杀上限
           </div>
         </div>

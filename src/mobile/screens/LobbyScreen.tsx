@@ -1,11 +1,18 @@
 import { useEffect } from 'react'
-import type { AppearanceData, RoomPublicState, Team } from '@shared/types'
+import type {
+  AppearanceData,
+  CombatMode,
+  RoomPublicState,
+  Team
+} from '@shared/types'
+import { teamLabel } from '@mobile/utils/teamLabels'
 
 interface Props {
   room: RoomPublicState
   selfId: string
   isHost: boolean
   appearance: AppearanceData | null
+  mode: CombatMode
   onEnroll: () => void
   onSyncAppearance: () => void
   onReady: (ready: boolean) => void
@@ -18,6 +25,7 @@ export function LobbyScreen({
   selfId,
   isHost,
   appearance,
+  mode,
   onEnroll,
   onSyncAppearance,
   onReady,
@@ -56,13 +64,21 @@ export function LobbyScreen({
           <div>
             <h2 className="screen__heading">房间 {room.roomCode}</h2>
             <p className="tiny muted">
-              红 {redCount} / 蓝 {blueCount} · 最多 3v3
+              {teamLabel('red', mode)} {redCount} / {teamLabel('blue', mode)}{' '}
+              {blueCount} · 最多 3v3
             </p>
           </div>
           <button className="ghost-button" onClick={onLeave}>
             离开
           </button>
         </header>
+
+        {mode === 'long-march' && (
+          <div className="notice notice--warning">
+            本模式以{teamLabel('red', mode)} / {teamLabel('blue', mode)}
+            阵营进行，战斗画面会按阵营显示军服。
+          </div>
+        )}
 
         <section className="card">
           <h3 className="card__title">玩家列表</h3>
@@ -117,14 +133,14 @@ export function LobbyScreen({
                 style={{ borderColor: 'var(--red)', color: 'var(--red)' }}
                 onClick={() => onTeam('red')}
               >
-                红队
+                {teamLabel('red', mode)}
               </button>
               <button
                 className="secondary-button grow"
                 style={{ borderColor: 'var(--blue)', color: 'var(--blue)' }}
                 onClick={() => onTeam('blue')}
               >
-                蓝队
+                {teamLabel('blue', mode)}
               </button>
             </div>
           </section>
@@ -166,7 +182,10 @@ export function LobbyScreen({
         <section className="card">
           <h3 className="card__title">开局条件</h3>
           <ChecklistItem ok={connected.length >= 2} label="至少 2 名玩家" />
-          <ChecklistItem ok={teamsReady} label="红蓝两队都至少 1 人" />
+          <ChecklistItem
+            ok={teamsReady}
+            label={`${teamLabel('red', mode)}和${teamLabel('blue', mode)}都至少 1 人`}
+          />
           <ChecklistItem ok={allEnrolled} label="所有玩家完成建档" />
           <ChecklistItem ok={allReady} label="非房主玩家已准备" />
           <p className="tiny muted" style={{ marginTop: 10 }}>

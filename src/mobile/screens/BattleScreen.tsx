@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BattleScene } from '@mobile/game/BattleScene'
 import { TriggerLatch } from '@mobile/game/TriggerLatch'
+import { UniformOverlay } from '@mobile/game/UniformOverlay'
 import { audio } from '@mobile/game/audio'
 import {
   DEFAULT_WEAPON,
@@ -21,11 +22,14 @@ import { useCamera } from '@mobile/hooks/useCamera'
 import { useServerClock } from '@mobile/hooks/useServerClock'
 import { useTouchInput } from '@mobile/hooks/useTouchInput'
 import { TargetSelector } from '@mobile/input/TargetSelector'
+import { teamLabel } from '@mobile/utils/teamLabels'
 import { TriggerButton } from '@mobile/input/TriggerButton'
 import { WeaponSwitch } from '@mobile/input/WeaponSwitch'
 import { VisionEngine, type VisionFrameResult } from '@mobile/vision/engine'
 import { warmupHuman } from '@mobile/vision/human'
+import { OverlayDetector } from '@mobile/vision/overlayDetector'
 import type {
+  CombatMode,
   DetectionQuality,
   GalleryEntry,
   RoomPublicState,
@@ -39,6 +43,7 @@ interface BattleProps {
   gallery: GalleryEntry[]
   quality: DetectionQuality
   cameraDeviceId: string | null
+  mode: CombatMode
   onLeave: () => void
   onFireShot: (targetId: string | null) => boolean
   onNotify: (
@@ -65,12 +70,16 @@ export function BattleScreen({
   gallery,
   quality,
   cameraDeviceId,
+  mode,
   onLeave,
   onFireShot,
   onNotify
 }: BattleProps): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const uniformCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const battleSceneRef = useRef<BattleScene | null>(null)
+  const overlayRendererRef = useRef<UniformOverlay | null>(null)
+  const overlayDetectorRef = useRef<OverlayDetector | null>(null)
   const visionRef = useRef<VisionEngine | null>(null)
   const selfTeamRef = useRef<Team | null>(null)
   const firingRef = useRef(false)
@@ -279,6 +288,40 @@ export function BattleScreen({
     }
   }, [camStatus, videoRef])
 
+  // ── Uniform overlay (Long March mode) ──────────────────────────────────
+
+  useEffect(() => {
+    if (mode !== 'long-march' || camStatus !== 'ready') return undefined
+    const canvas = uniformCanvasRef.current
+    const video = videoRef.current
+    if (!canvas || !video) return undefined
+
+    let renderer: UniformOverlay
+    let detector: OverlayDetector
+    try {
+      renderer = new UniformOverlay(canvas, video)
+      detector = new OverlayDetector()
+    } catch (error) {
+      console.warn('[battle] uniform overlay unavailable', error)
+      return undefined
+    }
+
+    overlayRendererRef.current = renderer
+    overlayDetectorRef.current = detector
+    detector.setSession(gallery, selfId)
+    const detach = detector.onPeople((people) => renderer.setPeople(people))
+    renderer.start()
+    detector.start(video)
+
+    return () => {
+      detach()
+      detector.stop()
+      renderer.stop()
+      overlayDetectorRef.current = null
+      overlayRendererRef.current = null
+    }
+  }, [mode, camStatus, gallery, selfId, videoRef])
+
   // Drop a manual selection whose player left the room.
   useEffect(() => {
     if (!selectedTargetId) return
@@ -407,6 +450,14 @@ export function BattleScreen({
       onContextMenu={(event) => event.preventDefault()}
     >
       <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
+      {mode === 'long-march' && (
+        <canvas
+          ref={uniformCanvasRef}
+          style={styles.uniformCanvas}
+          data-uniform-overlay="true"
+          aria-hidden="true"
+        />
+      )}
       <canvas ref={canvasRef} style={styles.canvas} />
 
       <div className="crosshair" aria-hidden="true">
@@ -416,10 +467,17 @@ export function BattleScreen({
       {/* Top bar */}
       {phase !== 'countdown' && (
         <div style={styles.hudTop}>
-          <div style={styles.score}>
-            <span style={{ color: 'var(--red)' }}>{room.score.red}</span>
-            <span style={{ opacity: 0.3, margin: '0 8px' }}>:</span>
-            <span style={{ color: 'var(--blue)' }}>{room.score.blue}</span>
+          <div style={styles.scoreBlock}>
+            <div style={styles.score}>
+              <span style={{ color: 'var(--red)' }}>{room.score.red}</span>
+              <span style={{ opacity: 0.3, margin: '0 8px' }}>:</span>
+              <span style={{ color: 'var(--blue)' }}>{room.score.blue}</span>
+            </div>
+            {mode === 'long-march' && (
+              <div style={styles.themeLabel}>
+                {teamLabel('red', mode)} vs {teamLabel('blue', mode)}
+              </div>
+            )}
           </div>
           {matchRemaining !== null && (
             <div style={styles.timer}>{formatClock(matchRemaining)}</div>
@@ -531,6 +589,7 @@ export function BattleScreen({
           <TargetSelector
             players={targets}
             selectedId={selectedTargetId}
+            mode={mode}
             onSelect={onSelectTarget}
           />
           <WeaponSwitch
@@ -590,6 +649,26 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     height: '100%',
     pointerEvents: 'none'
+  },
+  uniformCanvas: {
+    position: 'absolute',
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    pointerEvents: 'none'
+  },
+  scoreBlock: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center'
+  },
+  themeLabel: {
+    marginTop: 1,
+    fontSize: 9,
+    letterSpacing: '0.1em',
+    color: '#f0b0a0',
+    opacity: 0.75,
+    textShadow: '0 1px 4px rgba(0,0,0,0.9)'
   },
   hudTop: {
     position: 'absolute',

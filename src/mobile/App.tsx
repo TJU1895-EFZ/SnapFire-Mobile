@@ -32,6 +32,7 @@ import { storage } from '@mobile/storage'
 import type {
   AppearanceData,
   AppSettings,
+  CombatMode,
   GalleryEntry,
   HistoryData,
   MatchPhase,
@@ -64,7 +65,7 @@ type Screen =
   | 'lobby'
   | 'battle'
   | 'results'
-type SessionMode = 'urban' | 'long-march'
+type SessionMode = CombatMode
 type ToastKind = 'info' | 'success' | 'error'
 
 interface ToastState {
@@ -668,6 +669,7 @@ export function App(): React.JSX.Element {
           selfId={selfId}
           isHost={isHost}
           appearance={appearance}
+          mode={sessionMode}
           onEnroll={() => setShowEnrollment(true)}
           onSyncAppearance={syncAppearance}
           onReady={(ready) => netRef.current?.send({ type: 'set-ready', ready })}
@@ -693,6 +695,7 @@ export function App(): React.JSX.Element {
             gallery={gallery}
             quality={settings.detectionQuality}
             cameraDeviceId={settings.cameraDeviceId}
+            mode={sessionMode}
             onLeave={leaveRoom}
             onFireShot={(targetId) =>
               netRef.current?.send({ type: 'shot', targetId }) ?? false
@@ -708,6 +711,7 @@ export function App(): React.JSX.Element {
             result={result}
             selfId={selfId}
             isHost={isHost}
+            mode={sessionMode}
             onReturnLobby={returnToLobby}
             onLeave={leaveRoom}
           />

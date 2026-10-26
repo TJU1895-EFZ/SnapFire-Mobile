@@ -14,8 +14,8 @@ Version 2.0**. See `LICENSE` for the full text.
 
 ## Bundled AI models
 
-`blazeface`, `faceres` and `movenet-lightning` are redistributed unmodified as
-part of `@vladmandic/human`. Model credits and upstream licenses:
+`blazeface`, `faceres`, `movenet-lightning` and `centernet` are redistributed
+unmodified as part of `@vladmandic/human`. Model credits and upstream licenses:
 
 - https://github.com/vladmandic/human/wiki/Models
 
@@ -34,6 +34,11 @@ Not shipped in the application bundle:
 The SnapFire icon (`public/icons/`), the homepage operator SVG, and the 3D
 weapon/arm primitives are original to this project and covered by the project
 license.
+
+## User-supplied reference assets
+
+`public/assets/uniforms/red-army.jpg` and `public/assets/uniforms/kmt.jpeg`
+are provided by the project owner for the Long March uniform overlay.
 
 ## Full license texts
 

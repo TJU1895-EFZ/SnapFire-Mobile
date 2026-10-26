@@ -10,6 +10,14 @@ SnapFire 桌面版的**手机浏览器客户端**：手机摄像头当作瞄准�
 
 产品与规则见 [`docs/PRD.md`](docs/PRD.md)，开发计划见 [`docs/DEV_PLAN.md`](docs/DEV_PLAN.md)。
 
+## 模式
+
+- **常规作战**：单人、团战（巷战 / 野战）、夺旗、拆弹。目前只有
+  “团战 → 巷战”接入局域网房间，其余入口为占位。
+- **长征胜利 90 周年纪念**：10 秒导读 → 常规 / 历史场景。常规沿用巷战规则，
+  阵营显示为红军 / 国民党军，并在战斗画面按阵营叠加军服贴图。换装只影响
+  屏幕显示，识别与命中判定仍使用原始摄像头画面。
+
 ---
 
 ## 1. 环境要求
@@ -173,23 +181,26 @@ src/
   shared/                 与桌面版共享的类型与协议（不改）
   mobile/
     App.tsx               会话、网络、导航
-    screens/              Home / RoomEntry / Lobby / Battle / Results / Enrollment
-    input/                虚拟扳机、滑动目标选择
-    vision/               Human 引擎、建档、衣着/人脸匹配
-    game/                 Three.js 武器、程序化音效
+    screens/              Home / 作战菜单 / 长征导读 / 房间 / 大厅 / 战斗 / 结算
+    content/              长征导读文章与历史战役数据
+    input/                虚拟扳机、滑动目标选择、换枪按钮
+    vision/               Human 引擎、建档、衣着/人脸匹配、全屏多人换装检测
+    game/                 Three.js 武器、程序化音效、军服叠加渲染
     hooks/                摄像头、服务器时钟、触控状态
     net/                  WebSocket 客户端（浏览器原生）
     storage/              IndexedDB
-    components/           设置、战绩、安装提示、错误边界
+    components/           模式卡片、设置、战绩、安装提示、错误边界
   styles/                 global.css + screens.css
 public/
-  models/                 Human 离线模型（blazeface/faceres/movenet）
+  models/                 Human 离线模型（blazeface/faceres/movenet/centernet）
+  assets/uniforms/        长征模式军服贴图（红军 / 国民党军）
   icons/                  PWA 图标
   manifest.json           PWA 清单
   service-worker.js       离线壳 + 资源缓存
 scripts/
   lan-proxy.mjs           HTTPS 静态服务 + WSS 反向代理
   make-certs.mjs          证书生成
+  smoke-app.mjs           浏览器端到端冒烟测试
   smoke-lan.mjs           代理冒烟测试
 ```
 
@@ -216,6 +227,8 @@ scripts/
 
 已完成：M0–M7（构建、存储、导航、建档、触屏、战斗页、PWA、局域网 HTTPS/WSS），
 以及桌面版内嵌手机服务（桌面创建房间时自动启动，无需终端）。
+v1.2 改进：步枪连发 / 手枪 / 换枪动画、两级作战菜单、长征 90 周年导读与
+历史场景、红军 / 国民党军阵营显示及屏幕内玩家换装。
 待真机验收：M8（AI 性能实测与调优）、M9（桌面房主 + 手机完整对局）。
 
 已知限制：
