@@ -406,10 +406,11 @@ try {
   startMatch()
 
   await page.getByText('比赛开始').waitFor({ timeout: 10_000 })
-  await page.locator('[aria-label="开火"]').waitFor({ timeout: 20_000 })
+  const trigger = page.locator('[aria-label^="开火"]')
+  await trigger.waitFor({ timeout: 20_000 })
   await page.waitForFunction(
     () => {
-      const button = document.querySelector('[aria-label="开火"]')
+      const button = document.querySelector('[aria-label^="开火"]')
       return button instanceof HTMLButtonElement && !button.disabled
     },
     { timeout: 20_000 }
@@ -422,13 +423,69 @@ try {
     { timeout: 20_000 }
   )
 
+  await page.screenshot({ path: join(ARTIFACTS, '04a-battle-rifle.png') })
+
   const target = page.locator('[data-target-id="bot-alpha"]')
   await target.waitFor({ timeout: 10_000 })
   await target.click()
-  await page.locator('[aria-label="开火"]').click()
+  await trigger.click()
 
   await waitForNode(() => shots.length > 0, 12_000, 'shot message')
   assert.equal(shots[0], 'bot-alpha', 'manual target should be sent to the server')
+
+  // Rifle -> pistol: the HUD changes and a tap still sends one shot.
+  const weaponButton = page.locator('[aria-label^="切换武器"]')
+  await weaponButton.click()
+  await page.getByText('手枪 · 单发').waitFor({ timeout: 5_000 })
+  await page.waitForFunction(
+    () => {
+      const button = document.querySelector('[aria-label^="开火"]')
+      return button instanceof HTMLButtonElement && !button.disabled
+    },
+    { timeout: 5_000 }
+  )
+  await wait(500)
+  await page.screenshot({ path: join(ARTIFACTS, '04b-battle-pistol.png') })
+  const beforePistol = shots.length
+  await trigger.click()
+  await waitForNode(
+    () => shots.length > beforePistol,
+    12_000,
+    'pistol shot'
+  )
+  assert.equal(shots.at(-1), 'bot-alpha', 'pistol shot should keep the manual target')
+  await page.screenshot({ path: join(ARTIFACTS, '04c-battle-pistol-fired.png') })
+
+  // Pistol -> rifle, then hold the trigger: full-auto must send a burst.
+  await weaponButton.click()
+  await page.getByText('步枪 · 连发').waitFor({ timeout: 5_000 })
+  await page.waitForFunction(
+    () => {
+      const button = document.querySelector('[aria-label^="开火"]')
+      return button instanceof HTMLButtonElement && !button.disabled
+    },
+    { timeout: 5_000 }
+  )
+  await wait(500)
+  const beforeAuto = shots.length
+  const triggerBox = await trigger.boundingBox()
+  assert.ok(triggerBox, 'trigger should have a bounding box')
+  await page.mouse.move(
+    triggerBox.x + triggerBox.width / 2,
+    triggerBox.y + triggerBox.height / 2
+  )
+  await page.mouse.down()
+  await wait(2200)
+  await page.mouse.up()
+  await waitForNode(
+    () => shots.length - beforeAuto >= 2,
+    12_000,
+    'automatic burst'
+  )
+  assert.ok(
+    shots.slice(beforeAuto).every((id) => id === 'bot-alpha'),
+    'every burst shot should keep the manual target'
+  )
   await page.screenshot({ path: join(ARTIFACTS, '04-battle.png') })
 
   endMatch()

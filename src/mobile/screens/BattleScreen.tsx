@@ -8,12 +8,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BattleScene } from '@mobile/game/BattleScene'
+import { TriggerLatch } from '@mobile/game/TriggerLatch'
 import { audio } from '@mobile/game/audio'
+import {
+  DEFAULT_WEAPON,
+  WEAPONS,
+  nextWeapon,
+  switchDuration,
+  type WeaponId
+} from '@mobile/game/weapons'
 import { useCamera } from '@mobile/hooks/useCamera'
 import { useServerClock } from '@mobile/hooks/useServerClock'
 import { useTouchInput } from '@mobile/hooks/useTouchInput'
 import { TargetSelector } from '@mobile/input/TargetSelector'
 import { TriggerButton } from '@mobile/input/TriggerButton'
+import { WeaponSwitch } from '@mobile/input/WeaponSwitch'
 import { VisionEngine, type VisionFrameResult } from '@mobile/vision/engine'
 import { warmupHuman } from '@mobile/vision/human'
 import type {
@@ -49,7 +58,6 @@ interface LockState {
 }
 
 const EMPTY_LOCK: LockState = { kind: 'none', name: '', team: null, confidence: 0 }
-const LOCAL_FIRE_COOLDOWN_MS = 130
 
 export function BattleScreen({
   room,
@@ -68,6 +76,19 @@ export function BattleScreen({
   const firingRef = useRef(false)
   const lastShotAtRef = useRef(0)
   const prevHpRef = useRef<number | null>(null)
+  const weaponRef = useRef<WeaponId>(DEFAULT_WEAPON)
+  const fireRef = useRef<() => Promise<void>>(async () => undefined)
+  const latchRef = useRef<TriggerLatch | null>(null)
+  const switchTimerRef = useRef<number | null>(null)
+
+  if (latchRef.current === null) {
+    const spec = WEAPONS[DEFAULT_WEAPON]
+    latchRef.current = new TriggerLatch(
+      () => fireRef.current(),
+      spec.fireMode,
+      spec.fireIntervalMs
+    )
+  }
 
   const { videoRef, status: camStatus, error: camError, resolution, start: startCamera } =
     useCamera({ autoStart: true, deviceId: cameraDeviceId })
@@ -77,6 +98,8 @@ export function BattleScreen({
   const [lock, setLock] = useState<LockState>(EMPTY_LOCK)
   const [hitFlash, setHitFlash] = useState(false)
   const [sceneError, setSceneError] = useState<string | null>(null)
+  const [weapon, setWeapon] = useState<WeaponId>(DEFAULT_WEAPON)
+  const [weaponSwitching, setWeaponSwitching] = useState(false)
 
   const self = room.players.find((player) => player.id === selfId) ?? null
   const selfTeam = self?.team ?? null
@@ -115,6 +138,40 @@ export function BattleScreen({
     prevHpRef.current = hp
     return undefined
   }, [hp])
+
+  // ── Trigger semantics ──────────────────────────────────────────────────
+
+  useEffect(() => {
+    weaponRef.current = weapon
+    const spec = WEAPONS[weapon]
+    latchRef.current?.setMode(spec.fireMode, spec.fireIntervalMs)
+  }, [weapon])
+
+  useEffect(() => {
+    const release = (): void => latchRef.current?.release()
+    const onVisibility = (): void => {
+      if (document.hidden) release()
+    }
+    window.addEventListener('blur', release)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('blur', release)
+      document.removeEventListener('visibilitychange', onVisibility)
+      latchRef.current?.dispose()
+      if (switchTimerRef.current !== null) {
+        window.clearTimeout(switchTimerRef.current)
+        switchTimerRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!alive || phase !== 'playing') latchRef.current?.release()
+  }, [alive, phase])
+
+  useEffect(() => {
+    battleSceneRef.current?.setLock(lock.kind)
+  }, [lock.kind])
 
   // ── Three.js weapon ────────────────────────────────────────────────────
 
@@ -233,23 +290,28 @@ export function BattleScreen({
 
   const handleFire = useCallback(async (): Promise<void> => {
     if (!alive || phase !== 'playing' || firingRef.current) return
+    const spec = WEAPONS[weaponRef.current]
     const now = Date.now()
-    if (now - lastShotAtRef.current < LOCAL_FIRE_COOLDOWN_MS) return
+    if (now - lastShotAtRef.current < spec.fireIntervalMs) return
     lastShotAtRef.current = now
     firingRef.current = true
 
     // Immediate feedback; the identity check follows.
     audio.unlock()
-    audio.gunshot()
+    if (weaponRef.current === 'pistol') audio.pistolShot()
+    else audio.gunshot()
     battleSceneRef.current?.fire()
 
     try {
       let targetId: string | null = null
       const vision = visionRef.current
       if (vision) {
-        // Do not let a slow first inference freeze the trigger.  If the
-        // analysis misses the deadline, fall back to explicit selection.
-        const result = await withTimeout(vision.analyzeNow(), 1200)
+        // Automatic fire reuses a slightly older identity result so the
+        // burst keeps its cadence instead of waiting on every inference.
+        // Do not let a slow first inference freeze the trigger either: if
+        // the analysis misses the deadline, fall back to explicit selection.
+        const maxAgeMs = spec.fireMode === 'auto' ? 420 : 180
+        const result = await withTimeout(vision.analyzeNow(maxAgeMs), 1200)
         if (result?.match) {
           // Fresh, confident identity wins over manual selection.
           targetId = result.match.playerId
@@ -273,6 +335,43 @@ export function BattleScreen({
       firingRef.current = false
     }
   }, [alive, phase, selectedTargetId, onFireShot, onNotify])
+
+  useEffect(() => {
+    fireRef.current = handleFire
+  }, [handleFire])
+
+  const handleSwitchWeapon = useCallback((): void => {
+    if (weaponSwitching) return
+    const current = weaponRef.current
+    const next = nextWeapon(current)
+    const spec = WEAPONS[next]
+
+    // A trigger held across the swap would otherwise keep firing with the
+    // old cadence while the new model is still being raised.
+    latchRef.current?.release()
+    weaponRef.current = next
+    setWeapon(next)
+    setWeaponSwitching(true)
+    battleSceneRef.current?.switchWeapon(next)
+    audio.weaponSwitch()
+
+    if (switchTimerRef.current !== null) {
+      window.clearTimeout(switchTimerRef.current)
+    }
+    switchTimerRef.current = window.setTimeout(() => {
+      switchTimerRef.current = null
+      setWeaponSwitching(false)
+    }, switchDuration(spec))
+  }, [weaponSwitching])
+
+  const handleTriggerStart = useCallback((): void => {
+    if (!alive || phase !== 'playing' || weaponSwitching) return
+    latchRef.current?.press()
+  }, [alive, phase, weaponSwitching])
+
+  const handleTriggerEnd = useCallback((): void => {
+    latchRef.current?.release()
+  }, [])
 
   const requestLeave = useCallback((): void => {
     if (phase === 'playing' || phase === 'countdown') {
@@ -434,9 +533,16 @@ export function BattleScreen({
             selectedId={selectedTargetId}
             onSelect={onSelectTarget}
           />
+          <WeaponSwitch
+            weapon={weapon}
+            switching={weaponSwitching}
+            onSwitch={handleSwitchWeapon}
+          />
           <TriggerButton
-            onFire={() => void handleFire()}
-            disabled={!alive || phase !== 'playing'}
+            onPressStart={handleTriggerStart}
+            onPressEnd={handleTriggerEnd}
+            mode={WEAPONS[weapon].fireMode}
+            disabled={!alive || phase !== 'playing' || weaponSwitching}
           />
         </>
       )}
